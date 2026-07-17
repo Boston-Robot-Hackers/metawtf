@@ -1,4 +1,4 @@
-# F02 — Topic rate (hz) by pattern
+# F02 — Topic rate (hz) columns by pattern
 
 **Priority**: Medium
 **Done:** no
@@ -6,47 +6,69 @@
 **Tests Written:** no
 **Test Passing:** no
 
-**Description**: Extend metawtf with a rate metric. Config entries may select
-topics by a name pattern (regex) rather than an explicit topic, and request the
-`hz` metric instead of field echo. The tool resolves matching topics from the
-live ROS2 graph, subscribes to each (message type discovered from the graph, not
-the config), counts messages over a rolling window, and prints each topic's rate
-periodically. Motivating case: "hz for all topics starting with `tf`."
+**Description**: Add `hz` columns to the sampled table. An entry selects one
+topic (`topic:`) or many by regex (`match:`) against the live graph, with the
+message type discovered from the graph, and reports received-message rate over
+a rolling time `window`. The graph is rescanned periodically; topics that
+appear after start add new columns (header is reprinted). Motivating case:
+"hz for all topics starting with `/tf`."
 
-Builds on F01. Unified entry schema — an entry is either echo (F01) or hz (F02):
+Builds on F01:
 ```yaml
-metrics:
-  - match: "^/tf"        # regex on topic name
-    metric: hz
-    window: 5.0          # seconds, averaging window (default 5.0)
-  - topic: /cmd_vel      # F01-style echo entry still valid
-    metric: echo
-    fields: [linear.x, angular.z]
+columns:
+  - metric: hz
+    match: "^/tf"       # regex on graph topic names
+    window: 2.0         # rolling window, seconds (default 2.0; must be >= sample period)
+  - metric: hz
+    topic: /chatter     # single topic; column name = sanitized topic name
 ```
 
-Scope for v1 of this feature:
-- `match` = regex against topic names from the graph.
-- Message type resolved from the graph (`get_topic_names_and_types`).
-- Graph rescanned periodically so topics appearing after start are picked up.
-- `hz` = messages counted per rolling `window`, printed on a timer.
-- Output line, e.g. `12:00:05 /tf 62.1 hz (312 msgs / 5.0s)`.
+Output: one column per matched topic, e.g. `12:00:05.000,62.100,49.750`.
+Column names are derived from topic names (leading `/` stripped, remaining `/`
+→ `_`); `match` entries may not set `name`.
+
+Correctness rules (from `ros2topic/verb/hz.py` and `ros2cli/qos.py`):
+- Rate measures the **subscription receive rate**, from inter-arrival times
+  recorded at callback time: over the arrivals inside `window`,
+  rate = (n−1)/(t_newest − t_oldest); n < 2 → empty cell. Never computed from
+  message header stamps. This is the same estimator ros2 hz uses
+  (rate = 1/mean(Δt)) and — unlike naive count/window — it does not
+  under-report at startup or for sparse topics.
+- Arrival clock is `time.monotonic()` (wall). ros2 hz defaults to the ROS
+  clock with `--wall-time` as opt-in; we deliberately invert that. Sim-time
+  support deferred.
+- Subscriptions are created with `raw=True`: count serialized messages, skip
+  deserialization entirely (hz.py does the same when no filter is given).
+  Critical when matching high-rate image/pointcloud topics.
+- Same graph-checked QoS auto-selection as F01 — copied from `choose_qos`:
+  RELIABLE only if all publishers are RELIABLE else BEST_EFFORT;
+  TRANSIENT_LOCAL only if all publishers are TRANSIENT_LOCAL else VOLATILE.
+- Rolling window: deque of arrival times, entries older than `window` pruned
+  at each computation. (ros2 hz uses a count-based window, default 10000
+  messages; ours is time-based to fit the fixed row cadence.)
+- Matching runs against `get_topic_names_and_types`; multi-type topics are
+  skipped with a warning.
+- Column set may grow at rescan → a fresh header line is printed before the
+  next row (documented caveat for spreadsheet import).
 
 ## How to Demo
-**Setup**: A ROS2 graph publishing `tf` topics (e.g. any robot bringup, or
+**Setup**: A ROS2 graph publishing tf (e.g. robot bringup, or
 `ros2 run tf2_ros static_transform_publisher ...`). Package built and sourced.
 
 **Steps**:
-1. Config with `- match: "^/tf"` / `metric: hz`.
+1. Config with `- metric: hz` / `match: "^/tf"`.
 2. `ros2 run metawtf metawtf`
+3. While running, start a second tf-related publisher.
 
-**Expected output**: Every `window` seconds, one line per matched topic showing
-its measured rate, updating as traffic changes; new matching topics appear when
-they start publishing.
+**Expected output**: Rows show measured rates for `/tf` (and `/tf_static`);
+when the new publisher starts, a fresh header with the added column appears
+and its rate fills in.
 
 ## Non-Goals (this feature)
-- Glob syntax (regex only for now).
+- Glob syntax (regex only).
 - Bandwidth/bytes, jitter, min/max interval — hz only.
-- TUI / in-place refresh (still scrolling text).
+- Count-based windows, per-publisher breakdown, sim-time rates.
+- Removing columns for topics that vanish (their cells go empty).
 
 ## Process Gate
 After creating this feature file and the corresponding task file, **stop and

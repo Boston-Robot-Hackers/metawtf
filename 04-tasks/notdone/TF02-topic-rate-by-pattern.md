@@ -1,52 +1,66 @@
 # TF02 — Topic rate (hz) by pattern, tasks for Feature F02
 
-Depends on F01 (config loader, node scaffold, output). Tests use fake graph /
-fake clock so they run without a live ROS graph.
+Depends on F01 (config loader, sampler, QoS helper, node scaffold). Tests use
+fake graph / fake clock so they run without a live ROS graph.
 
-## T01 — Extend config schema for metrics
+## T01 — Schema: hz entries
 **Status**: not done
-**Description**: Parse unified entries: echo (`topic`+`fields`) and hz
-(`match`+`window`), keyed by `metric`. Default `metric` and `window`. Validate.
-**Test**: Unit test — hz entry and echo entry parse to expected structs; bad
-`metric`, missing `match`, non-numeric `window` raise clear errors.
+**Description**: Extend the column schema: `metric: hz` takes exactly one of
+`topic` (single topic) or `match` (regex, compiled at load; invalid regex →
+clear error). Optional `window` in seconds, default 2.0, must be >= the sample
+period. `name` is forbidden with `match` (column names come from topic names),
+optional with `topic`.
+**Test**: Unit test — hz and echo entries parse to expected structs; both
+`topic`+`match` present, neither present, bad regex, `window` too small, `name`
+with `match` → clear errors.
 
 ## T02 — Graph topic matcher
 **Status**: not done
-**Description**: Given a regex and the graph's topic list, return matching
-`(topic, type)` pairs. Wraps `get_topic_names_and_types`; type list flattened.
+**Description**: Given a compiled regex and the graph's
+`get_topic_names_and_types`, return matching `(topic, type)` pairs; type lists
+flattened, multi-type topics skipped with a warning. No match → empty list.
 **Test**: Unit test with an injected fake topic list — regex selects the right
-topics and their types; no match → empty.
+topics and their types; multi-type skipped; no match → empty.
 
-## T03 — Rate counter with rolling window
+## T03 — Rolling-window rate counter
 **Status**: not done
-**Description**: Per topic, record message arrival times; compute hz over
-`window`. Injectable clock. Drop timestamps older than the window.
-**Test**: Unit test feeding timed arrivals against a fake clock — computed hz
-matches expected within tolerance; empty window → 0 hz.
+**Description**: Per topic, record arrival times in a deque (injectable clock).
+`rate(now)`: prune entries older than `window`; with n >= 2 arrivals return
+(n−1)/(t_newest − t_oldest), else None. This span-based estimator matches
+`ros2 topic hz` and avoids the startup under-report of count/window.
+**Test**: Unit test with a fake clock — steady 10 msg/s over a 2 s window ≈
+10 hz; 3 messages in the first 0.2 s already reads 10 hz (not 1.5); a single
+message → None; old entries pruned.
 
-## T04 — Rate line formatter
+## T04 — Hz column via raw subscription
 **Status**: not done
-**Description**: Format `HH:MM:SS <topic> <hz> hz (<n> msgs / <window>s)`.
-**Test**: Unit test — fixed inputs produce exact expected string.
+**Description**: Create subscriptions with `raw=True` and record only the
+arrival time — the serialized payload is never touched. Column name derived
+from the topic (leading `/` stripped, remaining `/` → `_`). `sample()` returns
+the rate formatted `%.3f`, or None.
+**Test**: Unit test — callback with a fake serialized message records an
+arrival; naming rules; exact format string.
 
 ## T05 — Dynamic subscription manager
 **Status**: not done
-**Description**: On a periodic rescan, match graph topics, create subscriptions
-for new matches (type from graph), feed each callback into its rate counter.
-Avoid duplicate subscriptions.
-**Test**: Unit test the manager with a fake graph + fake node — first scan
-creates N subs, second scan with one new topic creates exactly one more, none
-duplicated.
+**Description**: On a periodic rescan (1 Hz timer), match graph topics, create
+raw subscriptions (auto QoS, type from graph) for new matches, each feeding its
+own rate counter. Never duplicate a subscription. Vanished topics keep their
+column with empty cells.
+**Test**: Unit test with a fake graph + fake node — first scan creates N subs;
+second scan with one new topic creates exactly one more; no duplicates.
 
-## T06 — Rate report timer
+## T06 — Dynamic columns + header reprint
 **Status**: not done
-**Description**: Timer fires every `window`; for each tracked topic compute hz,
-format, print. Integrate hz path alongside F01 echo path in the node.
-**Test**: Unit test the timer callback with injected counters — prints expected
-lines; echo entries unaffected.
+**Description**: Sampler supports the column set growing: when a rescan adds a
+column, print a fresh header line before the next row. Document the
+spreadsheet caveat in the sample config.
+**Test**: Unit test — captured stdout shows header, rows, new header with the
+added column, then rows with the extra cell.
 
 ## T07 — Feature test suite + demo verification
 **Status**: not done
-**Description**: T01–T06 pass together; sample config with `^/tf`; run demo
-against live tf publisher to confirm real rates and late-topic pickup.
-**Test**: `colcon test --packages-select metawtf` green; demo shows rate lines.
+**Description**: T01–T06 pass together; sample config with `match: "^/tf"`;
+run the demo against a live tf publisher plus a late-starting second tf topic.
+**Test**: `colcon test --packages-select metawtf` green; demo shows rate lines
+and a reprinted header with the new column.

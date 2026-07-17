@@ -1,14 +1,18 @@
 # Current Status — Session Handoff
 
-**Last updated:** 2026-07-16
+**Last updated:** 2026-07-17
 
 ## State
-Project scaffolded. No features or code yet.
+Output format decided: sampled wide CSV — one row per tick, one column per
+metric, stdout redirectable for spreadsheets/graphing. F01/F02 revised to this
+model; F03 (process CPU columns) added. Data-collection correctness researched
+against `ros2topic/hz.py` and `ros2cli/qos.py` — findings in `02-doc/notes.md`.
+No code yet.
 
 ## Next Steps
-1. Fill in `02-doc/spec.md`.
-2. Define first feature in `03-features/notdone/` and matching task file in `04-tasks/notdone/`.
-3. Get plan approval before writing code (see Process Gate in feature template).
+1. Get plan approval for F01/TF01 (then F02, F03) — see Process Gate in each
+   feature file.
+2. Implement TF01 tasks T01–T08 with tests.
 
 ## Open Questions
-- What does metawtf do?
+- None.
