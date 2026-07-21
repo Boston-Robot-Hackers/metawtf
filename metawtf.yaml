@@ -1,0 +1,10 @@
+sample_hz: 5.0
+columns:
+  - name: odom_x
+    metric: echo
+    topic: /odom
+    field: pose.pose.position.x
+  - name: odom_z
+    metric: echo
+    topic: /odom
+    field: pose.pose.position.z

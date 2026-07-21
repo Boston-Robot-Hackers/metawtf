@@ -3,8 +3,10 @@
 **Priority**: High
 **Done:** no
 **Tasks File Created:** yes
-**Tests Written:** no
-**Test Passing:** no
+**Tests Written:** yes
+**Test Passing:** partial — 25/29 unit tests pass locally (no ROS2 on this
+dev machine); 4 rclpy-dependent tests skip cleanly and need verification on
+a real ROS2 (Jazzy) box, along with `colcon test` and the live-talker demo.
 
 **Description**: A minimal CLI, `metawtf`, run with no arguments. On start it
 reads a YAML config next to the package (default `metawtf.yaml`) declaring a set

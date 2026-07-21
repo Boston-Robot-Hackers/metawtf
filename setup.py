@@ -17,6 +17,8 @@ setup(
     description="TODO: package description.",
     license="MIT",
     entry_points={
-        "console_scripts": [],
+        "console_scripts": [
+            "metawtf = metawtf.tracer_node:main",
+        ],
     },
 )
