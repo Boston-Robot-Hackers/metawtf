@@ -5,19 +5,33 @@ Author: Pito Salas and Claude Code
 Open Source Under MIT license
 """
 
-from metawtf.field_extract import extract_field
+from metawtf.field_extract import FieldPathError, extract_field
+
+INVALID = object()  # message arrived but its field path could not be read
 
 
 class EchoColumnState:
-    def __init__(self, name: str, field: str, stale_after: float | None):
+    def __init__(
+        self,
+        name: str,
+        field: str,
+        stale_after: float | None,
+        width: int | None = None,
+    ):
         self.name = name
         self.field = field
         self.stale_after = stale_after
+        self.width = width
         self.value = None
         self.arrival_time = None
 
     def on_message(self, msg, now: float) -> None:
-        self.value = extract_field(msg, self.field)
+        # A bad path is usually a config typo, but crashing a live trace over it
+        # is worse than flagging the cell; show "?" and keep the other columns.
+        try:
+            self.value = extract_field(msg, self.field)
+        except FieldPathError:
+            self.value = INVALID
         self.arrival_time = now
 
     def is_stale(self, now: float) -> bool:
@@ -28,6 +42,8 @@ class EchoColumnState:
     def sample(self, now: float) -> str | None:
         if self.arrival_time is None or self.is_stale(now):
             return None
+        if self.value is INVALID:
+            return "?"
         return format_value(self.value)
 
 

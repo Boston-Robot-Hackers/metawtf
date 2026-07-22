@@ -37,3 +37,17 @@ def test_sample_within_stale_window_returns_value():
     state = EchoColumnState("odom_x", "data", stale_after=2.0)
     state.on_message(SimpleNamespace(data=1.0), now=10.0)
     assert state.sample(11.5) == "1"
+
+
+def test_bad_field_path_shows_question_mark_not_crash():
+    state = EchoColumnState("x", "nope.missing", None)
+    state.on_message(SimpleNamespace(data=1.0), now=10.0)
+    assert state.sample(10.1) == "?"
+
+
+def test_recovers_to_value_after_a_good_message():
+    state = EchoColumnState("x", "data", None)
+    state.on_message(SimpleNamespace(other=1.0), now=10.0)  # no 'data' -> ?
+    assert state.sample(10.1) == "?"
+    state.on_message(SimpleNamespace(data=2.0), now=11.0)
+    assert state.sample(11.1) == "2"

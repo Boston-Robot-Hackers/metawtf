@@ -1,6 +1,6 @@
 ---
-version: "1.0"
-generated: "2026-07-21"
+version: "1.1"
+generated: "2026-07-22"
 ---
 
 # Config: turning `metawtf.yaml` into a typed `Config`
@@ -18,9 +18,11 @@ meant to run unattended against a live robot should fail loudly and early on
 a malformed config, not limp along with a `None` where a topic name should
 be and crash three layers deeper inside a subscription callback.
 
-## Two small data classes, not a dict
+## Data classes, one per column shape
 
-The parsed result is two dataclasses:
+The parsed result is a small family of dataclasses. F02 added the `hz` metric,
+so `columns` is now a union list rather than a list of one type — the additive
+change the original design anticipated:
 
 ```python
 @dataclass
@@ -30,20 +32,38 @@ class EchoColumn:
     field: str
     type: str | None = None
     stale_after: float | None = None
+    width: int | None = None
+
+
+@dataclass
+class HzColumn:
+    window: float
+    topic: str | None = None
+    match: re.Pattern | None = None
+    name: str | None = None
+    width: int | None = None
+
+
+@dataclass
+class TimeColumn:
+    format: str | None = None
+    width: int | None = None
 
 
 @dataclass
 class Config:
     sample_hz: float
-    columns: list[EchoColumn]
+    columns: list[EchoColumn | HzColumn]
+    time: TimeColumn = field(default_factory=TimeColumn)
 ```
 
-`EchoColumn` intentionally has only one shape today, because v1 supports
-exactly one column metric: `echo`. F02 and F03 will add `hz` and `proc_cpu`
-metrics later, at which point `columns` will likely become a list of a union
-type rather than a list of `EchoColumn`. Keeping `EchoColumn` narrowly named
-now (instead of a vague `Column`) means that future change is additive
-rather than a rename.
+An `HzColumn` carries either a single `topic` or a compiled `match` regex, never
+both (the parser enforces the exclusivity). `width` is shared across every
+column shape: an optional minimum column width the sampler uses for alignment.
+`TimeColumn` configures the always-present leading timestamp column, and
+`Config.time` defaults via `field(default_factory=TimeColumn)` so an older
+config with no `time:` block still parses — and so code constructing a `Config`
+directly (the tests do) need not mention it.
 
 ## Validation as a chain of small, single-purpose checks
 
@@ -61,12 +81,20 @@ def parse_config(data: dict) -> Config:
     raw_columns = data.get("columns")
     if not isinstance(raw_columns, list) or not raw_columns:
         raise ConfigError("'columns' must be a non-empty list")
-    columns = [parse_column(entry) for entry in raw_columns]
-    return Config(sample_hz=sample_hz, columns=columns)
+    sample_period = 1.0 / sample_hz
+    columns = [parse_column(entry, sample_period) for entry in raw_columns]
+    time = parse_time(data.get("time"))
+    return Config(sample_hz=sample_hz, columns=columns, time=time)
 ```
 
+Note that `sample_period` is threaded into `parse_column`: an `hz` column's
+`window` must be at least one sample period (a shorter window could not contain
+two arrivals at the row cadence), and that cross-field rule can only be checked
+once `sample_hz` is known. It is the one place a column validation depends on a
+top-level value.
+
 Each helper (`parse_sample_hz`, `parse_column`, `require_str`,
-`parse_stale_after`, ...) validates exactly one field and raises a
+`parse_stale_after`, `parse_width`, ...) validates exactly one field and raises a
 `ConfigError` with the offending value embedded in the message. None of them
 try to coerce a bad value into a good one — a string `"fast"` for
 `sample_hz` is not silently treated as the default; it is rejected. This is
@@ -83,33 +111,36 @@ flowchart TD
     D --> F{columns non-empty list?}
     F -->|no| E
     F -->|yes| G[parse_column per entry]
-    G --> H{metric == echo?}
-    H -->|no| E
-    H -->|yes| I[parse_echo_column]
+    G --> H{metric?}
+    H -->|unknown| E
+    H -->|echo| I[parse_echo_column]
+    H -->|hz| K[parse_hz_column]
     I --> J[Config]
+    K --> J
 ```
 
-## Deriving column names from topic and field
+`parse_column` now dispatches on `metric` through `VALID_METRICS = {"echo",
+"hz"}`; an `hz` entry routes to `parse_hz_column`, which enforces the
+"exactly one of `topic`/`match`" rule, compiles the regex at load time (so a bad
+pattern is reported here, not at first use), and forbids a hand-set `name` on a
+`match` column since those names come from the matched topics.
 
-When a config omits `name`, one is derived from the topic and field:
+## Deriving column names from the topic
+
+When a config omits `name`, the column is named after its topic:
 
 ```python
 def sanitize_topic(topic: str) -> str:
     return topic.lstrip("/").replace("/", "_")
-
-
-def default_column_name(topic: str, field: str) -> str:
-    last_segment = field.split(".")[-1]
-    return f"{sanitize_topic(topic)}_{last_segment}"
 ```
 
-`/odom` + `pose.pose.position.x` becomes `odom_x` — short enough to read as
-a spreadsheet header, but still traceable back to its source. `sanitize_topic`
-is written as a general topic-name sanitizer (strip the leading slash,
-collapse remaining slashes to underscores) even though v1's example never
-exercises the "remaining slashes" branch, because F02's `hz` columns need the
-identical rule for topics matched by regex. Sharing the function now avoids
-two slightly-different sanitizers drifting apart later.
+`/robot/odom` becomes `robot_odom` — short enough to read as a spreadsheet
+header, but still traceable back to its source. Echo and single-topic hz columns
+share this exact rule, and a `match` hz column names each discovered topic the
+same way, so a header is unambiguous no matter which metric produced it. (An
+earlier version appended the field's last segment for echo columns — `odom_x` —
+but that was dropped in favour of the plain topic name; give two echo columns on
+the same topic explicit `name`s to tell them apart.)
 
 ## Loading from disk is a thin, separately-testable seam
 
@@ -129,10 +160,9 @@ the only piece that touches disk, and it stays a two-line wrapper.
 
 ## Observations for future improvement
 
-- **Union types for columns.** Once F02/F03 land, `Config.columns` should
-  probably become `list[EchoColumn | HzColumn | ProcCpuColumn]` with
-  `parse_column` dispatching on `metric`. The current `VALID_METRICS = {"echo"}`
-  guard is already shaped to make that dispatch a one-line extension.
+- **F03 slots in the same way F02 did.** Adding `proc_cpu` means one more
+  dataclass, `"proc_cpu"` in `VALID_METRICS`, and a `parse_proc_cpu_column`
+  branch in `parse_column` — the dispatch is already shaped for it.
 - **Error aggregation.** Right now the first invalid field aborts parsing.
   For a config with several mistakes, a user fixes them one at a time across
   several runs. Collecting all errors before raising would shorten that

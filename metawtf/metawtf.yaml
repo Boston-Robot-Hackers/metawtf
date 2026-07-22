@@ -1,0 +1,15 @@
+sample_hz: 1.0
+columns:
+  - name: nav
+    metric: echo
+    topic: /cmd_vel_nav
+    field: linear.x
+  - name: cmd_vel
+    metric: echo
+    topic: /cmd_vel
+    field: linear.x
+  - name: cmd_vel_smoothed
+    topic: /cmd_vel_smoothed
+    metric: echo
+    field: linear.x
+

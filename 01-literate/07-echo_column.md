@@ -1,6 +1,6 @@
 ---
-version: "1.0"
-generated: "2026-07-21"
+version: "1.1"
+generated: "2026-07-22"
 ---
 
 # Echo Column: last-known-value semantics
@@ -19,17 +19,42 @@ execution contexts:
 
 ```python
 class EchoColumnState:
-    def __init__(self, name: str, field: str, stale_after: float | None):
+    def __init__(
+        self,
+        name: str,
+        field: str,
+        stale_after: float | None,
+        width: int | None = None,
+    ):
         self.name = name
         self.field = field
         self.stale_after = stale_after
+        self.width = width
         self.value = None
         self.arrival_time = None
 
     def on_message(self, msg, now: float) -> None:
-        self.value = extract_field(msg, self.field)
+        try:
+            self.value = extract_field(msg, self.field)
+        except FieldPathError:
+            self.value = INVALID
         self.arrival_time = now
 ```
+
+`width` is stored but never used here — the state carries it only so the
+sampler, which iterates columns without knowing their concrete type, can read
+`.width` uniformly across echo and hz columns. It is part of the column
+`Protocol`, not of the echo semantics.
+
+The `try`/`except` around extraction is a deliberate softening of the
+"report, don't repair" rule, made at the runtime boundary. A bad field path is
+almost always a config typo — but that typo is discovered per-message, deep in a
+subscription callback, and letting it propagate there would crash the whole
+trace (every other column included). Instead the message's arrival is still
+recorded and the offending field is flagged with the `INVALID` sentinel, which
+`sample` renders as `"?"`. The error is not swallowed silently — it shows up as
+a visible `?` in that column on every row, which tells the user the path is
+wrong without taking the process down. A subsequent readable message clears it.
 
 `on_message` runs inside a ROS subscription callback — however often the
 topic publishes, however large the message. It does the minimum possible
@@ -71,6 +96,8 @@ published once. `stale_after` opts a column out of that:
     def sample(self, now: float) -> str | None:
         if self.arrival_time is None or self.is_stale(now):
             return None
+        if self.value is INVALID:
+            return "?"
         return format_value(self.value)
 ```
 

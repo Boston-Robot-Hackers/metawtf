@@ -18,12 +18,9 @@ structs; missing `field`, non-numeric `sample_hz`, unknown key, bad `metric`
 each raise a clear error.
 
 ## T02 — Message type resolution
-**Status**: code done, tests partially verified — `metawtf/msg_type.py`.
-Graph-lookup path (`resolve_type_string_from_graph`) is pure and passes 3
-tests locally. `resolve_type_from_string` needs `rosidl_runtime_py`, not
-installed in this dev environment; its 2 tests are written with
-`pytest.importorskip` and currently skip. Needs verification on a real
-ROS2 install.
+**Status**: done — `metawtf/msg_type.py`. All 5 tests pass on ROS2 Jazzy,
+including the `resolve_type_from_string` tests that previously skipped when
+`rosidl_runtime_py` was absent.
 **Description**: Resolve config `type` strings via
 `rosidl_runtime_py.utilities.get_message`. When `type` is omitted, look the
 topic up in the graph (`get_topic_names_and_types`): use its type, raise a
@@ -43,10 +40,8 @@ Attribute paths only; no sequence indexing.
 returned; bad path raises.
 
 ## T04 — QoS auto-selection
-**Status**: code done, tests unverified — `metawtf/qos_select.py`. Needs
-`rclpy.qos`, not installed in this dev environment. 4 tests written in
-`test/test_qos_select.py` with `pytest.importorskip`; currently skip.
-Needs verification on a real ROS2 install.
+**Status**: done — `metawtf/qos_select.py`. All 4 tests in
+`test/test_qos_select.py` pass on ROS2 Jazzy.
 **Description**: Helper that, given the publisher endpoint info list for a
 topic, returns a QoSProfile: RELIABLE iff every publisher is RELIABLE else
 BEST_EFFORT; TRANSIENT_LOCAL iff every publisher is TRANSIENT_LOCAL else
@@ -76,11 +71,10 @@ fixed from config.
 row strings; None → empty cell.
 
 ## T07 — Node wiring, lazy subscribe, CLI
-**Status**: code done, tests unverified — `metawtf/tracer_node.py`,
-`console_scripts` entry added in `setup.py`. Needs `rclpy`, not installed
-in this dev environment. 2 tests written in `test/test_tracer_node.py`
-with `pytest.importorskip`; currently skip. Needs verification (build +
-smoke test) on a real ROS2 install.
+**Status**: done — `metawtf/tracer_node.py`, `console_scripts` entry in
+`setup.py`. Tests in `test/test_tracer_node.py` pass on ROS2 Jazzy; the node
+builds and runs via `ros2 run metawtf metawtf`. Config is resolved next to the
+installed module (`default_config_path`), installed via `package_data`.
 **Description**: TracerNode: per echo column resolve type (config or graph),
 create the subscription with auto QoS; if the topic is absent, retry on a
 1 Hz rescan timer so late topics still connect. `main()`: load config,
@@ -92,11 +86,12 @@ test that the node constructs and destroys cleanly under a real
 covered by the demo, not the suite — noted here as the reason.
 
 ## T08 — Feature test suite + demo verification
-**Status**: not done — blocked on a real ROS2 (Jazzy) environment. This
-dev machine has no `ros2`, no `rclpy`, no `~/ros2_ws`. 25/29 unit tests
-pass locally (pure logic); 4 are ROS-dependent and skip cleanly rather
-than fail. `colcon test` and the live-talker demo still need to run on
-the actual ROS2 box. Sample `metawtf.yaml` added at repo root.
+**Status**: done — on ROS2 Jazzy, `python3 -m pytest test/` reports 34 passed
+(the style guide's plain-pytest gate; `colcon test` has a separate discovery
+quirk, tracked as a chore). Live demo: published `/chatter` at 5 Hz and ran
+`ros2 run metawtf metawtf` → header printed once, rows at `sample_hz`, empty
+cells before first message, then the echoed value. Sample `metawtf.yaml` lives
+next to the module.
 **Description**: T01–T07 pass together; add a sample `metawtf.yaml`; run the
 F01 demo against a live talker; redirect to a file and confirm it imports as
 clean CSV.

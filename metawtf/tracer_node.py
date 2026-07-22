@@ -5,21 +5,20 @@ Author: Pito Salas and Claude Code
 Open Source Under MIT license
 """
 
+import sys
+import termios
+import threading
 import time
+import tty
 from datetime import datetime
 from pathlib import Path
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
+from metawtf.column_manager import ColumnManager
 from metawtf.config import Config, load_config
-from metawtf.echo_column import EchoColumnState
-from metawtf.msg_type import (
-    MessageTypeError,
-    TopicNotFoundError,
-    resolve_message_type,
-)
-from metawtf.qos_select import select_qos
 from metawtf.sampler import Sampler
 
 CONFIG_FILENAME = "metawtf.yaml"
@@ -29,62 +28,71 @@ RESCAN_PERIOD_SEC = 1.0
 class TracerNode(Node):
     def __init__(self, config: Config):
         super().__init__("metawtf")
-        self.config_columns = config.columns
-        self.states = [
-            EchoColumnState(column.name, column.field, column.stale_after)
-            for column in config.columns
-        ]
-        self.is_subscribed = [False] * len(config.columns)
-        self.sampler = Sampler(self.states)
-        for index in range(len(config.columns)):
-            self.try_subscribe(index)
-        self.create_timer(RESCAN_PERIOD_SEC, self.rescan)
+        self.manager = ColumnManager(self, config)
+        self.states = self.manager.states
+        self.sampler = Sampler(self.states, config.time)
+        self.manager.scan()
+        self.create_timer(RESCAN_PERIOD_SEC, self.manager.scan)
         self.create_timer(1.0 / config.sample_hz, self.on_tick)
-
-    def try_subscribe(self, index: int) -> None:
-        if self.is_subscribed[index]:
-            return
-        column = self.config_columns[index]
-        try:
-            names_and_types = self.get_topic_names_and_types()
-            msg_class = resolve_message_type(
-                column.topic, column.type, names_and_types
-            )
-        except TopicNotFoundError:
-            return
-        except MessageTypeError as error:
-            self.get_logger().error(str(error))
-            return
-        qos = select_qos(self.get_publishers_info_by_topic(column.topic))
-        state = self.states[index]
-        self.create_subscription(
-            msg_class,
-            column.topic,
-            lambda msg, state=state: state.on_message(msg, time.monotonic()),
-            qos,
-        )
-        self.is_subscribed[index] = True
-
-    def rescan(self) -> None:
-        for index in range(len(self.config_columns)):
-            self.try_subscribe(index)
 
     def on_tick(self) -> None:
         self.sampler.tick(time.monotonic(), datetime.now())
 
 
+def default_config_path() -> Path:
+    return Path.cwd() / CONFIG_FILENAME
+
+
+def wait_for_quit(stream, on_quit) -> None:
+    # Quit on a bare 'q' keypress (no Enter needed) or EOF. Runs on a daemon
+    # thread; the terminal is put in cbreak mode so single chars arrive live.
+    while True:
+        char = stream.read(1)
+        if char == "" or char.lower() == "q":
+            break
+    on_quit()
+
+
+def start_quit_watcher(on_quit):
+    # Returns a restore callable, or None when stdin is not an interactive tty
+    # (e.g. piped input) — in that case only Ctrl-C stops the run.
+    if sys.stdin is None or not sys.stdin.isatty():
+        return None
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    tty.setcbreak(fd)
+    print("metawtf running — press q or Ctrl-C to quit.", file=sys.stderr)
+    thread = threading.Thread(
+        target=wait_for_quit, args=(sys.stdin, on_quit), daemon=True
+    )
+    thread.start()
+    return lambda: termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def spin_until_quit(node) -> None:
+    stop = threading.Event()
+    restore = start_quit_watcher(stop.set)
+    try:
+        while rclpy.ok() and not stop.is_set():
+            rclpy.spin_once(node, timeout_sec=0.1)
+    finally:
+        if restore is not None:
+            restore()
+
+
 def main(args=None) -> None:
     rclpy.init(args=args)
-    config_path = Path.cwd() / CONFIG_FILENAME
-    config = load_config(config_path)
+    config = load_config(default_config_path())
     node = TracerNode(config)
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
+        spin_until_quit(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        print("metawtf stopped.", file=sys.stderr)
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

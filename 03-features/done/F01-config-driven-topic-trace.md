@@ -1,12 +1,12 @@
 # F01 — Config-driven sampled table trace
 
 **Priority**: High
-**Done:** no
+**Done:** yes
 **Tasks File Created:** yes
 **Tests Written:** yes
-**Test Passing:** partial — 25/29 unit tests pass locally (no ROS2 on this
-dev machine); 4 rclpy-dependent tests skip cleanly and need verification on
-a real ROS2 (Jazzy) box, along with `colcon test` and the live-talker demo.
+**Test Passing:** yes — 34/34 unit tests pass on ROS2 Jazzy (including the
+rclpy/rosidl-dependent tests); `colcon build` succeeds and the live demo
+against a real publisher produced clean CSV with correct empty-cell behavior.
 
 **Description**: A minimal CLI, `metawtf`, run with no arguments. On start it
 reads a YAML config next to the package (default `metawtf.yaml`) declaring a set
