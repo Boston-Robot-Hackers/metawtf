@@ -1,5 +1,5 @@
 ---
-version: "1.1"
+version: "1.2"
 generated: "2026-07-22"
 ---
 
@@ -72,36 +72,70 @@ that broke the edit-and-run loop: `Path(__file__)` at runtime points at the
 the next `colcon build`. Reading from the current directory is the ordinary CLI
 convention — edit `./metawtf.yaml`, run `metawtf`, see the change immediately.
 
-## A nicer way to quit than Ctrl-C
-
-`rclpy.spin` blocks until a signal, which leaves Ctrl-C as the only exit. F02's
-usability pass adds a bare `q` keypress. The heart of it is a tiny, pure loop
-that is unit-tested with a `StringIO`:
+## A tiny CLI, on purpose
 
 ```python
-def wait_for_quit(stream, on_quit) -> None:
+def parse_cli(argv: list[str]) -> Path:
+    # Deliberately minimal: only -h and -f, no argparse.
+    config_path = default_config_path()
+    args = list(argv)
+    while args:
+        arg = args.pop(0)
+        if arg == "-h":
+            print_help()
+            raise SystemExit(0)
+        if arg == "-f" and args:
+            config_path = Path(args.pop(0))
+            continue
+        raise SystemExit(f"metawtf: bad argument {arg!r}\n\n{HELP_TEXT}")
+    return config_path
+```
+
+Two flags: `-h` prints `HELP_TEXT` (the same text the `h` keypress shows at
+runtime) and exits; `-f <yaml>` overrides the default `./metawtf.yaml`. A
+hand-rolled loop over `sys.argv` was chosen over `argparse` deliberately — two
+flags don't justify the machinery, and `SystemExit` with the help text gives
+the same UX for an unknown argument. `-f` without a value falls through to the
+same error, since a lone `-f` matches neither branch.
+
+## Keys: quit, pause, help
+
+`rclpy.spin` blocks until a signal, which leaves Ctrl-C as the only exit. The
+key watcher adds a bare `q` to quit, space to pause, and `h` for help. The
+heart of it is a tiny, pure loop that is unit-tested with a `StringIO`:
+
+```python
+def watch_keys(stream, on_quit, on_pause, on_help=print_help) -> None:
     while True:
         char = stream.read(1)
         if char == "" or char.lower() == "q":
             break
+        if char == " ":
+            on_pause()
+        if char.lower() == "h":
+            on_help()
     on_quit()
 ```
 
-Reading one character at a time (`read(1)`) rather than a line is what lets `q`
-work without Enter — but only if the terminal is in *cbreak* mode, where
-keystrokes are delivered immediately instead of being line-buffered by the tty.
-Setting that mode, and restoring it afterwards, is the wrapper's job:
+Pause (`TracerNode.toggle_pause`) stops only the *row output*; subscriptions
+keep running, so the first row after resuming shows current values rather than
+a backlog. Reading one character at a time (`read(1)`) rather than a line is
+what lets keys work without Enter — but only if the terminal is in *cbreak*
+mode, where keystrokes are delivered immediately instead of being
+line-buffered by the tty. Setting that mode, and restoring it afterwards, is
+the wrapper's job:
 
 ```python
-def start_quit_watcher(on_quit):
+def start_key_watcher(on_quit, on_pause):
     if sys.stdin is None or not sys.stdin.isatty():
         return None
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     tty.setcbreak(fd)
-    print("metawtf running — press q or Ctrl-C to quit.", file=sys.stderr)
+    print("metawtf running — space pauses, h help, q or Ctrl-C quits.",
+          file=sys.stderr)
     thread = threading.Thread(
-        target=wait_for_quit, args=(sys.stdin, on_quit), daemon=True
+        target=watch_keys, args=(sys.stdin, on_quit, on_pause), daemon=True
     )
     thread.start()
     return lambda: termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -120,7 +154,7 @@ daemon thread so it can't keep the process alive on its own.
 ```python
 def spin_until_quit(node) -> None:
     stop = threading.Event()
-    restore = start_quit_watcher(stop.set)
+    restore = start_key_watcher(stop.set, node.toggle_pause)
     try:
         while rclpy.ok() and not stop.is_set():
             rclpy.spin_once(node, timeout_sec=0.1)
@@ -130,8 +164,9 @@ def spin_until_quit(node) -> None:
 
 
 def main(args=None) -> None:
+    config_path = parse_cli(sys.argv[1:])
     rclpy.init(args=args)
-    config = load_config(default_config_path())
+    config = load_config(config_path)
     node = TracerNode(config)
     try:
         spin_until_quit(node)
@@ -158,11 +193,12 @@ calling it twice (once by the signal handler, once here) raises.
 
 ## Observations for future improvement
 
-- **The quit key is fixed at `q`.** Fine, but a caller wanting a different key,
-  or wanting to disable the watcher entirely, would have to edit the module.
-- **`config` path has no override.** A `--config PATH` argument would make the
-  CLI more flexible now that it is invoked as a bare command; it was an explicit
-  non-goal earlier and could be revisited.
+- **The key bindings are fixed.** `q`/space/`h` are hard-coded; fine until
+  someone wants to remap or disable them.
+- **`parse_cli` reads `sys.argv` even when `main(args=...)` is passed ROS
+  args.** ROS remapping arguments (`--ros-args`) on the command line would be
+  rejected as unknown; acceptable while metawtf is invoked as a plain command,
+  worth a filter if launch-file use ever appears.
 - **No live reconfiguration.** Editing `metawtf.yaml` mid-run has no effect;
   the config is read once at startup. A SIGHUP-driven reload could be added if
   long traces need it.

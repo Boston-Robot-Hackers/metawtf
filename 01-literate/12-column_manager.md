@@ -1,5 +1,5 @@
 ---
-version: "1.0"
+version: "1.1"
 generated: "2026-07-22"
 ---
 
@@ -23,12 +23,13 @@ which subscriptions were made.
 The key realization that keeps this module small: an echo subscription and an hz
 subscription differ in only two ways — the `raw` flag, and (for echo) a
 configured message type. Both callbacks are literally `state.on_message(msg,
-now)`. So a single `Subscription` record captures every case:
+now)`. F04 added one generalization: a single subscription may feed *several*
+column states (one per JSON subfield), so the record holds a list:
 
 ```python
 @dataclass
 class Subscription:
-    state: object
+    states: list
     topic: str
     configured_type: str | None
     raw: bool
@@ -36,27 +37,82 @@ class Subscription:
     failed: bool = False
 ```
 
-Building the initial column set is then a three-way branch on the config column:
+Building the initial column set is a three-way branch on the config column,
+with echo handling split out because it now has three shapes of its own:
 
 ```python
     def add_config_column(self, column) -> None:
         if isinstance(column, EchoColumn):
-            state = EchoColumnState(
-                column.name, column.field, column.stale_after, column.width
-            )
-            self.register(state, column.topic, column.type, raw=False)
+            self.add_echo_column(column)
         elif column.match is not None:
             self.match_specs.append(
                 MatchSpec(column.match, column.window, column.width)
             )
         else:
             state = HzColumnState(column.name, column.window, column.width)
-            self.register(state, column.topic, None, raw=True)
+            self.register([state], column.topic, None, raw=True)
 ```
 
 Echo and single-topic hz columns register a fixed `Subscription` immediately (to
 be filled once the topic exists). A `match` column registers no column yet — it
 becomes a `MatchSpec` that produces columns later.
+
+## Echo's three shapes: plain, subfields, and discovered keys
+
+```python
+    def add_echo_column(self, column: EchoColumn) -> None:
+        if column.subfields is not None:
+            states = [
+                JsonEchoColumnState(
+                    name, column.field, key, column.stale_after, column.width,
+                )
+                for name, key in zip(column.subfield_names, column.subfields)
+            ]
+            self.register(states, column.topic, column.type, raw=False)
+        elif column.is_json:
+            self.register_expander(column)
+        else:
+            state = EchoColumnState(
+                column.name, column.field, column.stale_after, column.width
+            )
+            self.register([state], column.topic, column.type, raw=False)
+```
+
+An explicit `subfields:` list fans out at config time: one
+`JsonEchoColumnState` per key, all sharing one subscription (the column names
+were already computed by `config.py`, keeping naming policy in one place).
+`json: true` *without* subfields can't know its columns until a message
+arrives, so it registers a `JsonKeysExpander` instead:
+
+```python
+class JsonKeysExpander:
+    def on_message(self, msg, now: float) -> None:
+        if self.expanded:
+            return
+        try:
+            data = json.loads(extract_field(msg, self.column.field))
+        except (FieldPathError, ValueError, TypeError):
+            return  # wait for a well-formed message before fixing the columns
+        if not isinstance(data, dict):
+            return
+        self.expanded = True
+        for key in data:
+            state = JsonEchoColumnState(...)
+            self.manager.states.append(state)
+            self.subscription.states.append(state)
+            state.on_message(msg, now)
+```
+
+The expander is a *recipient impostor*: it sits in the subscription's
+`states` list looking like a column state, but instead of holding a value it
+waits for the first parseable message, then installs one real column per
+top-level key — in the dict's insertion order, which for JSON is the order
+the keys appeared in the message. Growing `manager.states` triggers the
+sampler's header reprint (the same mechanism F02's `match` columns use). The
+column set is then *fixed*: keys appearing only in later messages are ignored,
+and a missing key renders `?` — a documented caveat that keeps the CSV shape
+stable. Note the final `state.on_message(msg, now)`: the message that revealed
+the keys also supplies their first values, so the trigger row isn't blank.
 
 ## Scanning: fixed subscriptions plus discovered ones
 
@@ -125,7 +181,7 @@ flowchart TD
             sub.failed = True
             return
         qos = select_qos(self.node.get_publishers_info_by_topic(sub.topic))
-        callback = make_callback(sub.state)
+        callback = make_callback(sub.states)
         self.node.create_subscription(
             msg_class, sub.topic, callback, qos, raw=sub.raw
         )
@@ -139,23 +195,35 @@ configured type, or a genuinely multi-type topic) will not fix itself, so the
 column is marked `failed` and never retried, which prevents the same error from
 being logged once per second forever.
 
-`make_callback` is a free function rather than an inline lambda so the
-late-binding `state=state` default is captured correctly for each column — the
-classic closure-in-a-loop trap, avoided by construction:
+`make_callback` closes over the subscription's *list* of recipients rather
+than a single state, and iterates a copy on each delivery:
 
 ```python
-def make_callback(state):
-    return lambda msg, state=state: state.on_message(msg, time.monotonic())
+def make_callback(recipients):
+    def callback(msg):
+        now = time.monotonic()
+        for state in list(recipients):
+            state.on_message(msg, now)
+    return callback
 ```
+
+The `list(recipients)` copy matters: the `JsonKeysExpander` mutates that very
+list from inside its own `on_message` (appending the freshly discovered column
+states), and mutating a list while iterating it is undefined behavior worth
+never risking. Taking `time.monotonic()` once per delivery also gives every
+fan-out column the identical arrival timestamp.
 
 ## Observations for future improvement
 
 - **QoS is chosen once, at subscribe time.** If a topic's publishers change
   their QoS after we connect, we don't renegotiate. Rare, but a periodic re-check
   could be added for long-running traces.
-- **`Subscription.state` is typed `object`.** It is always an `EchoColumnState`
-  or `HzColumnState`; a small union type would document the contract the
-  callback relies on.
+- **`Subscription.states` is typed `list`.** Its members are column states or
+  a `JsonKeysExpander`; a small protocol type (`on_message(msg, now)`) would
+  document the contract the callback relies on.
+- **Shared JSON parsing.** Sibling subfield columns each re-parse the same
+  JSON string per message; a fan-out that parses once would remove the
+  duplicate work if wide JSON topics appear.
 - **A vanished topic keeps consuming a column slot forever.** Intentional for
   now, but a very long run against a churning graph could accumulate empty
   columns; an optional prune could be offered later.

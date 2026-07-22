@@ -261,3 +261,77 @@ def test_time_unknown_key_raises():
             "time:\n  bogus: 1\ncolumns:\n  - metric: echo\n"
             "    topic: /odom\n    field: x\n"
         )
+
+
+def test_plain_echo_has_json_false_and_no_subfields():
+    config = load("columns:\n  - metric: echo\n    topic: /odom\n    field: x\n")
+    assert config.columns[0].is_json is False
+    assert config.columns[0].subfields is None
+
+
+def test_json_subfields_parse():
+    config = load(
+        """
+        columns:
+          - metric: echo
+            topic: /explore/status
+            field: data
+            json: true
+            subfields: [reached, failed]
+        """
+    )
+    column = config.columns[0]
+    assert column.is_json is True
+    assert column.subfields == ["reached", "failed"]
+    assert column.name == "explore_status"
+
+
+def test_subfields_without_json_raises():
+    with pytest.raises(ConfigError):
+        load(
+            "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
+            "    subfields: [a]\n"
+        )
+
+
+def test_name_with_multiple_subfields_raises():
+    with pytest.raises(ConfigError):
+        load(
+            "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
+            "    json: true\n    subfields: [a, b]\n    name: foo\n"
+        )
+
+
+def test_name_with_single_subfield_is_column_header():
+    config = load(
+        "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
+        "    json: true\n    subfields: [reached]\n    name: foo\n"
+    )
+    assert config.columns[0].subfield_names == ["foo"]
+
+
+def test_subfield_names_derive_from_topic_and_keys():
+    config = load(
+        "columns:\n  - metric: echo\n    topic: /explore/status\n"
+        "    field: data\n    json: true\n    subfields: [reached, payload.count]\n"
+    )
+    assert config.columns[0].subfield_names == [
+        "explore_status_reached",
+        "explore_status_payload_count",
+    ]
+
+
+def test_empty_subfields_list_raises():
+    with pytest.raises(ConfigError):
+        load(
+            "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
+            "    json: true\n    subfields: []\n"
+        )
+
+
+def test_non_bool_json_raises():
+    with pytest.raises(ConfigError):
+        load(
+            "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
+            "    json: yes_please\n"
+        )

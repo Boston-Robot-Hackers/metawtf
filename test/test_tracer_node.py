@@ -15,25 +15,79 @@ import io
 from pathlib import Path
 
 from metawtf.config import Config, EchoColumn
-from metawtf.tracer_node import TracerNode, default_config_path, wait_for_quit
+from metawtf.tracer_node import (
+    TracerNode,
+    default_config_path,
+    parse_cli,
+    watch_keys,
+)
 
 
-def test_wait_for_quit_stops_on_q():
-    calls = []
-    wait_for_quit(io.StringIO("q\n"), lambda: calls.append(True))
-    assert calls == [True]
+def noop():
+    pass
 
 
-def test_wait_for_quit_ignores_other_lines_then_stops_on_q():
-    calls = []
-    wait_for_quit(io.StringIO("foo\n\nq\n"), lambda: calls.append(True))
-    assert calls == [True]
+def test_watch_keys_stops_on_q():
+    quits = []
+    watch_keys(io.StringIO("q"), lambda: quits.append(True), noop)
+    assert quits == [True]
 
 
-def test_wait_for_quit_stops_on_eof():
-    calls = []
-    wait_for_quit(io.StringIO(""), lambda: calls.append(True))
-    assert calls == [True]
+def test_watch_keys_stops_on_eof():
+    quits = []
+    watch_keys(io.StringIO(""), lambda: quits.append(True), noop)
+    assert quits == [True]
+
+
+def test_watch_keys_space_toggles_pause_without_quitting():
+    quits = []
+    pauses = []
+    watch_keys(
+        io.StringIO("  q"),  # two spaces then q
+        lambda: quits.append(True),
+        lambda: pauses.append(True),
+    )
+    assert pauses == [True, True]
+    assert quits == [True]
+
+
+def test_watch_keys_h_shows_help_without_quitting():
+    quits = []
+    helps = []
+    watch_keys(
+        io.StringIO("hq"),
+        lambda: quits.append(True),
+        noop,
+        on_help=lambda: helps.append(True),
+    )
+    assert helps == [True]
+    assert quits == [True]
+
+
+def test_parse_cli_default_is_cwd_config():
+    assert parse_cli([]) == Path.cwd() / "metawtf.yaml"
+
+
+def test_parse_cli_f_overrides_config_path():
+    assert parse_cli(["-f", "other.yaml"]) == Path("other.yaml")
+
+
+def test_parse_cli_h_prints_help_and_exits(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        parse_cli(["-h"])
+    assert excinfo.value.code == 0
+    assert "usage: metawtf" in capsys.readouterr().err
+
+
+def test_parse_cli_unknown_argument_exits_nonzero():
+    with pytest.raises(SystemExit) as excinfo:
+        parse_cli(["--bogus"])
+    assert excinfo.value.code != 0
+
+
+def test_parse_cli_f_without_value_exits_nonzero():
+    with pytest.raises(SystemExit):
+        parse_cli(["-f"])
 
 
 @pytest.fixture(autouse=True)
@@ -63,5 +117,5 @@ def test_on_message_updates_echo_state():
     )
     node = TracerNode(config)
     node.states[0].on_message(SimpleNamespace(data=1.0), now=0.0)
-    assert node.states[0].sample(0.0) == "1"
+    assert node.states[0].sample(0.0) == "1.00"
     node.destroy_node()

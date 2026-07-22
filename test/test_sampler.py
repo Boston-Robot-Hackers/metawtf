@@ -52,8 +52,8 @@ def test_width_pads_header_and_cells_but_keeps_commas():
     wall = datetime(2026, 1, 1, 12, 0, 1, 200000)
     sampler.tick(now_monotonic=0.0, now_wall=wall)
     lines = out.getvalue().splitlines()
-    assert lines[0] == "time,cpu     ,odom_z"
-    assert lines[1] == "12:00:01.200,1.5     ,"
+    assert lines[0] == "time,cpu,     odom_z"
+    assert lines[1] == "12:00:01.200,1.5,     "
 
 
 def test_time_format_and_width_applied():
@@ -64,8 +64,8 @@ def test_time_format_and_width_applied():
     wall = datetime(2026, 1, 1, 12, 0, 1, 200000)
     sampler.tick(now_monotonic=0.0, now_wall=wall)
     lines = out.getvalue().splitlines()
-    assert lines[0] == "time      ,a"
-    assert lines[1] == "12:00:01  ,1"
+    assert lines[0] == "time,      a"
+    assert lines[1] == "12:00:01,  1"
 
 
 def test_default_time_keeps_millisecond_format():

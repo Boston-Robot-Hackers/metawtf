@@ -1,5 +1,5 @@
 ---
-version: "1.1"
+version: "1.2"
 generated: "2026-07-22"
 ---
 
@@ -33,6 +33,9 @@ class EchoColumn:
     type: str | None = None
     stale_after: float | None = None
     width: int | None = None
+    is_json: bool = False
+    subfields: list[str] | None = None
+    subfield_names: list[str] | None = None
 
 
 @dataclass
@@ -124,6 +127,43 @@ flowchart TD
 "exactly one of `topic`/`match`" rule, compiles the regex at load time (so a bad
 pattern is reported here, not at first use), and forbids a hand-set `name` on a
 `match` column since those names come from the matched topics.
+
+## JSON subfields: naming decided here, not in the manager
+
+F04 lets an echo column parse a JSON-string field and select keys out of it
+(`json: true` plus an optional `subfields:` list). The parser enforces the
+feature's coupling rules — `subfields` requires `json: true`, and an explicit
+`name` is only allowed when it can unambiguously name *one* column:
+
+```python
+def resolve_echo_name(entry, topic, is_json, subfields) -> str:
+    if subfields is not None and not is_json:
+        raise ConfigError("'subfields' requires 'json: true'")
+    if subfields is not None and len(subfields) > 1 and "name" in entry:
+        raise ConfigError("'name' is not allowed with more than one subfield")
+    ...
+
+
+def resolve_subfield_names(entry, name, subfields) -> list[str] | None:
+    if subfields is None:
+        return None
+    if len(subfields) == 1 and "name" in entry:
+        return [name]
+    return [subfield_name(name, key) for key in subfields]
+
+
+def subfield_name(prefix: str, key: str) -> str:
+    return f"{prefix}_{key.replace('.', '_')}"
+```
+
+The per-key column headers (`explore_status_reached`) are computed *here*, at
+parse time, and travel in `EchoColumn.subfield_names`. The alternative — the
+column manager deriving names when it fans out states — would split naming
+policy across two modules; keeping it beside `sanitize_topic` means every
+header rule lives on one page. (`json: true` with no `subfields` leaves
+`subfield_names` as `None`: those columns can't be named until the first
+message reveals the keys, so the manager derives them at runtime with the same
+`subfield_name` helper.)
 
 ## Deriving column names from the topic
 

@@ -1,5 +1,5 @@
 ---
-version: "1.1"
+version: "1.2"
 generated: "2026-07-22"
 ---
 
@@ -85,16 +85,16 @@ flowchart LR
 
 ```python
     def format_header(self) -> str:
-        cells = [pad("time", self.time.width)]
-        cells += [pad(column.name, column.width) for column in self.columns]
-        return ",".join(cells)
+        cells = [("time", self.time.width)]
+        cells += [(column.name, column.width) for column in self.columns]
+        return join_cells(cells)
 
     def format_row(self, now_monotonic: float, now_wall: datetime) -> str:
-        cells = [pad(format_timestamp(now_wall, self.time.format), self.time.width)]
+        cells = [(format_timestamp(now_wall, self.time.format), self.time.width)]
         for column in self.columns:
             value = column.sample(now_monotonic)
-            cells.append(pad("" if value is None else value, column.width))
-        return ",".join(cells)
+            cells.append(("" if value is None else value, column.width))
+        return join_cells(cells)
 ```
 
 In F01 the header was printed once behind a boolean, because the column set was
@@ -106,23 +106,41 @@ gets a fresh, correctly-labelled header before the wider rows begin. (This is
 the documented CSV caveat: a single file may contain more than one header line.)
 
 `None` from any column still becomes an empty string, never `"None"` and never
-`0`. Each cell — and the header name above it — is passed through `pad`.
+`0`. Formatting collects `(text, width)` pairs and hands them to `join_cells`.
 
-## Padding: a minimum width, never a truncation
+## Padding: comma first, spaces after
 
 ```python
+def join_cells(cells: list[tuple[str, int | None]]) -> str:
+    parts = []
+    last_index = len(cells) - 1
+    for index, (text, width) in enumerate(cells):
+        if index < last_index:
+            text = f"{text},"
+            width = None if width is None else width + 1
+        parts.append(pad(text, width))
+    return "".join(parts)
+
+
 def pad(text: str, width: int | None) -> str:
     if width is None:
         return text
     return text.ljust(width)
 ```
 
+The comma binds to the value it terminates, and the padding spaces come
+*after* it — `1.50,      ` rather than `1.50      ,`. Visually the separator
+hugs its value instead of floating in front of the next column, and the file
+still parses as CSV (each field simply carries leading spaces, which
+spreadsheets strip). The `width + 1` accounts for the comma now occupying a
+character inside the padded cell; the last cell gets no comma and no
+adjustment.
+
 `width` is a *minimum*. `ljust` pads a short value with trailing spaces so
 columns line up when eyeballed in a terminal, but a value longer than `width` is
 returned untouched — metawtf never truncates data to fit. An over-long cell
 overflows and nudges that row's later columns out of alignment until the next
-row, which is the accepted trade-off for never losing a value. The commas
-survive padding, so the row still imports as CSV.
+row, which is the accepted trade-off for never losing a value.
 
 ## A configurable timestamp
 

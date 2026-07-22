@@ -40,21 +40,33 @@ class Sampler:
         print(self.format_row(now_monotonic, now_wall), file=self.out)
 
     def format_header(self) -> str:
-        cells = [pad("time", self.time.width)]
-        cells += [pad(column.name, column.width) for column in self.columns]
-        return ",".join(cells)
+        cells = [("time", self.time.width)]
+        cells += [(column.name, column.width) for column in self.columns]
+        return join_cells(cells)
 
     def format_row(self, now_monotonic: float, now_wall: datetime) -> str:
-        cells = [pad(format_timestamp(now_wall, self.time.format), self.time.width)]
+        cells = [(format_timestamp(now_wall, self.time.format), self.time.width)]
         for column in self.columns:
             value = column.sample(now_monotonic)
-            cells.append(pad("" if value is None else value, column.width))
-        return ",".join(cells)
+            cells.append(("" if value is None else value, column.width))
+        return join_cells(cells)
+
+
+def join_cells(cells: list[tuple[str, int | None]]) -> str:
+    # The comma binds to the value it follows and padding comes after it, so
+    # columns line up in the terminal while the row still imports as CSV.
+    parts = []
+    last_index = len(cells) - 1
+    for index, (text, width) in enumerate(cells):
+        if index < last_index:
+            text = f"{text},"
+            width = None if width is None else width + 1
+        parts.append(pad(text, width))
+    return "".join(parts)
 
 
 def pad(text: str, width: int | None) -> str:
-    # Left-justify to a minimum width so columns line up in the terminal; the
-    # commas remain, so the row still imports cleanly as CSV. Never truncates.
+    # Left-justify to a minimum width; never truncates.
     if width is None:
         return text
     return text.ljust(width)

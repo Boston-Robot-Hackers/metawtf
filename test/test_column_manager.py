@@ -6,6 +6,7 @@ Open Source Under MIT license
 """
 
 import re
+from types import SimpleNamespace
 
 from metawtf.column_manager import ColumnManager
 from metawtf.config import Config, EchoColumn, HzColumn
@@ -20,6 +21,7 @@ class FakeNode:
     def __init__(self, names_and_types):
         self.names_and_types = names_and_types
         self.subscriptions_made = []
+        self.callbacks = {}
 
     def get_topic_names_and_types(self):
         return self.names_and_types
@@ -29,6 +31,7 @@ class FakeNode:
 
     def create_subscription(self, msg_class, topic, callback, qos, raw=False):
         self.subscriptions_made.append((topic, raw))
+        self.callbacks[topic] = callback
 
     def get_logger(self):
         return FakeLogger()
@@ -95,3 +98,64 @@ def test_echo_column_waits_when_topic_absent():
     manager = ColumnManager(node, config)
     manager.scan()
     assert node.subscriptions_made == []
+
+
+def json_config(subfields, subfield_names):
+    column = EchoColumn(
+        name="chatter",
+        topic="/chatter",
+        field="data",
+        is_json=True,
+        subfields=subfields,
+        subfield_names=subfield_names,
+    )
+    return Config(sample_hz=5.0, columns=[column])
+
+
+def test_json_subfields_fan_out_from_one_subscription():
+    node = FakeNode([("/chatter", ["std_msgs/msg/String"])])
+    config = json_config(["reached", "failed"], ["chatter_reached", "chatter_failed"])
+    manager = ColumnManager(node, config)
+    manager.scan()
+    assert node.subscriptions_made == [("/chatter", False)]
+    assert [state.name for state in manager.states] == [
+        "chatter_reached", "chatter_failed",
+    ]
+    message = SimpleNamespace(data='{"reached": 3, "failed": 1}')
+    node.callbacks["/chatter"](message)
+    assert manager.states[0].value == 3
+    assert manager.states[1].value == 1
+
+
+def test_json_without_subfields_expands_on_first_message():
+    node = FakeNode([("/chatter", ["std_msgs/msg/String"])])
+    manager = ColumnManager(node, json_config(None, None))
+    manager.scan()
+    assert manager.states == []
+    node.callbacks["/chatter"](
+        SimpleNamespace(data='{"state": "idle", "reached": 3}')
+    )
+    assert [state.name for state in manager.states] == [
+        "chatter_state", "chatter_reached",
+    ]
+    assert manager.states[0].value == "idle"
+
+
+def test_expanded_columns_are_fixed_after_first_message():
+    node = FakeNode([("/chatter", ["std_msgs/msg/String"])])
+    manager = ColumnManager(node, json_config(None, None))
+    manager.scan()
+    node.callbacks["/chatter"](SimpleNamespace(data='{"reached": 3}'))
+    node.callbacks["/chatter"](SimpleNamespace(data='{"extra": 9}'))
+    assert [state.name for state in manager.states] == ["chatter_reached"]
+    assert manager.states[0].sample(0.0) == "?"
+
+
+def test_expander_waits_through_malformed_first_message():
+    node = FakeNode([("/chatter", ["std_msgs/msg/String"])])
+    manager = ColumnManager(node, json_config(None, None))
+    manager.scan()
+    node.callbacks["/chatter"](SimpleNamespace(data="not json {"))
+    assert manager.states == []
+    node.callbacks["/chatter"](SimpleNamespace(data='{"reached": 3}'))
+    assert [state.name for state in manager.states] == ["chatter_reached"]

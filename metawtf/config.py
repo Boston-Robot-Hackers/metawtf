@@ -13,7 +13,10 @@ DEFAULT_HZ_WINDOW = 2.0
 VALID_METRICS = {"echo", "hz"}
 TOP_LEVEL_KEYS = {"sample_hz", "columns", "time"}
 TIME_KEYS = {"format", "width"}
-ECHO_KEYS = {"name", "metric", "topic", "type", "field", "stale_after", "width"}
+ECHO_KEYS = {
+    "name", "metric", "topic", "type", "field", "stale_after", "width",
+    "json", "subfields",
+}
 ECHO_REQUIRED_KEYS = {"metric", "topic", "field"}
 HZ_KEYS = {"metric", "topic", "match", "window", "name", "width"}
 
@@ -30,6 +33,9 @@ class EchoColumn:
     type: str | None = None
     stale_after: float | None = None
     width: int | None = None
+    is_json: bool = False
+    subfields: list[str] | None = None
+    subfield_names: list[str] | None = None
 
 
 @dataclass
@@ -120,9 +126,9 @@ def parse_echo_column(entry: dict) -> EchoColumn:
     field = require_str(entry, "field")
     column_type = optional_str(entry, "type")
     stale_after = parse_stale_after(entry.get("stale_after"))
-    name = entry.get("name") or sanitize_topic(topic)
-    if not isinstance(name, str):
-        raise ConfigError(f"'name' must be a string, got {name!r}")
+    is_json = parse_bool(entry.get("json", False), "json")
+    subfields = parse_subfields(entry.get("subfields"))
+    name = resolve_echo_name(entry, topic, is_json, subfields)
     return EchoColumn(
         name=name,
         topic=topic,
@@ -130,7 +136,54 @@ def parse_echo_column(entry: dict) -> EchoColumn:
         type=column_type,
         stale_after=stale_after,
         width=parse_width(entry.get("width")),
+        is_json=is_json,
+        subfields=subfields,
+        subfield_names=resolve_subfield_names(entry, name, subfields),
     )
+
+
+def resolve_echo_name(entry, topic, is_json, subfields) -> str:
+    if subfields is not None and not is_json:
+        raise ConfigError("'subfields' requires 'json: true'")
+    if subfields is not None and len(subfields) > 1 and "name" in entry:
+        raise ConfigError("'name' is not allowed with more than one subfield")
+    name = entry.get("name") or sanitize_topic(topic)
+    if not isinstance(name, str):
+        raise ConfigError(f"'name' must be a string, got {name!r}")
+    return name
+
+
+def resolve_subfield_names(entry, name, subfields) -> list[str] | None:
+    if subfields is None:
+        return None
+    # An explicit name on a single-subfield selection is the column header
+    # itself; otherwise headers are <base>_<key with dots as underscores>.
+    if len(subfields) == 1 and "name" in entry:
+        return [name]
+    return [subfield_name(name, key) for key in subfields]
+
+
+def subfield_name(prefix: str, key: str) -> str:
+    return f"{prefix}_{key.replace('.', '_')}"
+
+
+def parse_bool(value, key: str) -> bool:
+    if not isinstance(value, bool):
+        raise ConfigError(f"'{key}' must be true or false, got {value!r}")
+    return value
+
+
+def parse_subfields(value) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"'subfields' must be a non-empty list, got {value!r}")
+    for item in value:
+        if not isinstance(item, str) or not item:
+            raise ConfigError(
+                f"each subfield must be a non-empty string, got {item!r}"
+            )
+    return value
 
 
 def parse_hz_column(entry: dict, sample_period: float) -> HzColumn:

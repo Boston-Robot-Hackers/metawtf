@@ -32,4 +32,4 @@ class HzColumnState:
         rate = self.counter.rate(now)
         if rate is None:
             return None
-        return f"{rate:.3f}"
+        return f"{rate:.2f}"

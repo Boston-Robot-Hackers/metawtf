@@ -22,7 +22,7 @@ def test_on_message_records_arrival_and_ignores_payload():
     state = HzColumnState("tf", window=2.0)
     for arrival in (0.0, 0.1, 0.2):
         state.on_message(b"serialized-bytes-ignored", now=arrival)
-    assert state.sample(0.2) == "10.000"
+    assert state.sample(0.2) == "10.00"
 
 
 def test_sample_before_two_messages_is_none():

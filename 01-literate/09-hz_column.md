@@ -1,5 +1,5 @@
 ---
-version: "1.0"
+version: "1.1"
 generated: "2026-07-22"
 ---
 
@@ -31,7 +31,7 @@ class HzColumnState:
         rate = self.counter.rate(now)
         if rate is None:
             return None
-        return f"{rate:.3f}"
+        return f"{rate:.2f}"
 ```
 
 `on_message` takes the message and ignores it. That is the whole point of the
@@ -43,7 +43,7 @@ callback signature the subscription calls — a boundary adapter, not dead code.
 
 `sample` turns the counter's `float | None` into the column's `str | None`:
 `None` (fewer than two arrivals in the window) becomes an empty cell, and a
-real rate is formatted to three decimals.
+real rate is formatted to two decimals.
 
 ## Naming a discovered topic
 
@@ -67,7 +67,7 @@ flowchart LR
       Sub["raw subscription"] --> OM[on_message] --> RC[(RateCounter.record)]
     end
     subgraph per tick
-      Smp[sampler] --> SP[sample now] --> RT[RateCounter.rate] --> F["%.3f or empty"]
+      Smp[sampler] --> SP[sample now] --> RT[RateCounter.rate] --> F["%.2f or empty"]
     end
 ```
 
@@ -77,6 +77,6 @@ flowchart LR
   the goal, but note the factory is the only intended way to build a match
   column; a stray `HzColumnState("/tf", ...)` would keep the slash in its
   header. A brief docstring on that invariant would help.
-- **Format precision is fixed at `%.3f`.** Fine for typical robotics rates, but
-  a topic running at thousands of hz would show three now-meaningless decimals;
+- **Format precision is fixed at `%.2f`.** Fine for typical robotics rates, but
+  a topic running at thousands of hz would show now-meaningless decimals;
   a significant-figures format could adapt automatically.
