@@ -61,7 +61,9 @@ a later message with an extra/missing key does not add/remove columns and yields
 `?` for the missing one.
 
 ## T06 — Feature test suite + demo verification
-**Status**: not done
+**Status**: done — full pytest green (112); live demo run by the user on
+2026-07-22 showed scalar columns for the JSON keys and `?` on a malformed
+message.
 **Description**: T01–T05 pass together; run the demo against a JSON-string
 publisher on a **non-real** topic (`/mw_demo_status`), including a deliberately
 malformed message to show `?`.

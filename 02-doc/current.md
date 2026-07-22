@@ -8,12 +8,12 @@ Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). Full suite:
 
 **F01 (TF01): DONE and closed** — echo columns, moved to `done/`.
 
-**F02 (TF02): T01–T06 DONE, T07 partial.** hz columns by `topic` or `match`
-regex. **T07 still owed:** the live `match: "^/tf"` demo with a late-starting
-second tf topic showing a reprinted header. Only then move F02/TF02 to `done/`.
+**F02 (TF02): DONE and closed** — hz columns by `topic` or `match` regex.
+Live tf demo verified by the user 2026-07-22; moved to `done/`.
 
-**F04 (TF04): T01–T05 DONE, T06 partial.** JSON-string fields expanded into
-subfield columns (`json: true` + `subfields:` on an echo column):
+**F04 (TF04): DONE and closed** — JSON-string fields expanded into subfield
+columns; live demo (scalar columns + `?` on malformed) verified by the user
+2026-07-22; moved to `done/`. Implementation:
 - `metawtf/json_select.py` — dotted-key scalar selection from parsed JSON (T02)
 - `metawtf/value_column.py` — shared `ValueColumnState` base + `INVALID`
   sentinel; `EchoColumnState` and `JsonEchoColumnState` both derive from it
@@ -24,11 +24,8 @@ subfield columns (`json: true` + `subfields:` on an echo column):
   states; `JsonKeysExpander` grows columns from the first parsed message when
   `subfields` is omitted (T04, T05)
 
-**T06 still owed:** live demo — good JSON shows scalar columns, malformed shows
-`?`. `~/ros2_ws/metawtf.yaml` is set up with `/explore/status`
-(`subfields: [state, reached, failed]`) plus a commented `/mw_demo_status`
-stand-in publisher command. Run `metawtf` from `~/ros2_ws` to verify, then move
-TF04/F04 to `done/`.
+Next up: **F03 process CPU** is the only open feature (TF03 in
+`04-tasks/notdone/`).
 
 ## Chores landed this session (`04-tasks/chores.md`)
 - Floats print with 2 decimals everywhere (echo `.2f`, hz `.2f`).

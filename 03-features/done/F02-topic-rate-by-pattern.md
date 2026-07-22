@@ -1,10 +1,10 @@
 # F02 — Topic rate (hz) columns by pattern
 
 **Priority**: Medium
-**Done:** no
+**Done:** yes
 **Tasks File Created:** yes
-**Tests Written:** no
-**Test Passing:** no
+**Tests Written:** yes
+**Test Passing:** yes
 
 **Description**: Add `hz` columns to the sampled table. An entry selects one
 topic (`topic:`) or many by regex (`match:`) against the live graph, with the

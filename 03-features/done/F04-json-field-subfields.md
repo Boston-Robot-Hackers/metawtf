@@ -1,10 +1,10 @@
 # F04 — JSON-string fields expanded into subfield columns
 
 **Priority**: Medium
-**Done:** no
+**Done:** yes
 **Tasks File Created:** yes
-**Tests Written:** no
-**Test Passing:** no
+**Tests Written:** yes
+**Test Passing:** yes
 
 **Description**: Some topics carry structured data as a JSON string inside a
 single message field rather than as native ROS submessage fields. The

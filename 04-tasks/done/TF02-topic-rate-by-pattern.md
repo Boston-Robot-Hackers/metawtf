@@ -75,10 +75,9 @@ spreadsheet caveat in the sample config.
 added column, then rows with the extra cell.
 
 ## T07 — Feature test suite + demo verification
-**Status**: partial — T01–T06 pass together (77 tests green on Jazzy). Still
-owed: the live `match: "^/tf"` demo with a late-starting second tf topic
-showing a reprinted header. A live echo+time+width demo against `/chatter` has
-been run; the tf-match demo has not.
+**Status**: done — T01–T06 pass together (112 tests green on Jazzy). The live
+tf demo was run by the user on 2026-07-22 and verified: hz rate columns plus a
+reprinted header when a late column appeared.
 **Description**: T01–T06 pass together; sample config with `match: "^/tf"`;
 run the demo against a live tf publisher plus a late-starting second tf topic.
 **Test**: `colcon test --packages-select metawtf` green; demo shows rate lines
