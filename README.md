@@ -4,6 +4,31 @@ A minimal ROS2 CLI that samples selected topic fields into a CSV stream on
 stdout — one row per tick — so you can eyeball live values and redirect the
 same output to a file for spreadsheets and graphing.
 
+## How is this different from `ros2 bag`?
+
+They overlap only in that both watch topics. `ros2 bag` is a flight recorder:
+it stores *every* raw message on the selected topics, serialized, for later
+replay or offline analysis. High fidelity — but unreadable while recording,
+and turning it into "just `pose.position.x` as a plottable series" takes
+post-processing.
+
+metawtf is a live, deliberately lossy, pre-shaped view:
+
+- **Time-aligned columns.** Topics publishing at different rates are resampled
+  onto a shared clock, one row per tick, so their values are directly
+  comparable and plottable. A bag keeps each message's own timestamp;
+  alignment is your problem later.
+- **Watchable while it runs.** `ros2 topic echo` legibility with multi-topic
+  breadth — eyeball values live, or redirect the same stream to a file.
+- **Derived values.** `hz` columns compute receive rates; `json: true` reaches
+  inside a JSON string carried in a message field. A bag just stores bytes.
+- **Tiny output, zero post-processing.** Last-known-value sampling at a few Hz
+  produces a CSV a spreadsheet opens directly.
+
+Rule of thumb: if you don't yet know which fields you'll need, record a bag —
+metawtf can't recover data it didn't sample. If you know exactly which scalars
+you want to watch or graph *right now*, that's metawtf.
+
 ## Installation
 
 ```bash
