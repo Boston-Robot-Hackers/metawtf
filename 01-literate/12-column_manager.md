@@ -1,6 +1,6 @@
 ---
-version: "1.1"
-generated: "2026-07-22"
+version: "1.2"
+generated: "2026-07-23"
 ---
 
 # Column manager: one place that owns subscriptions
@@ -118,29 +118,35 @@ the keys also supplies their first values, so the trigger row isn't blank.
 
 ```python
     def scan(self) -> bool:
+        # The graph is queried once per scan and the snapshot handed down, not
+        # once per pending subscription — those queries are DDS round-trips.
+        names_and_types = self.node.get_topic_names_and_types()
         for sub in list(self.subscriptions):
-            self.try_subscribe(sub)
+            self.try_subscribe(sub, names_and_types)
         added = False
         for spec in self.match_specs:
-            added = self.scan_match(spec) or added
+            added = self.scan_match(spec, names_and_types) or added
         return added
 ```
 
-`scan` runs at construction and then on a 1 Hz timer. Each pass retries every
-not-yet-subscribed fixed column (so a late-starting topic still connects), then
-expands every match spec. `scan_match` is where the column list grows:
+`scan` runs at construction and then on a 1 Hz timer. Each pass takes *one*
+snapshot of the graph and hands it down to every consumer —
+`get_topic_names_and_types()` is a DDS round-trip, and an earlier version
+called it once per pending subscription per scan, multiplying graph traffic
+by the number of late-starting topics. A pass retries every
+not-yet-subscribed fixed column (so a late-starting topic still connects),
+then expands every match spec. `scan_match` is where the column list grows:
 
 ```python
-    def scan_match(self, spec: MatchSpec) -> bool:
-        names_and_types = self.node.get_topic_names_and_types()
+    def scan_match(self, spec: MatchSpec, names_and_types) -> bool:
         added = False
         for topic, _type in match_topics(spec.pattern, names_and_types):
             if topic in self.matched_topics:
                 continue
             self.matched_topics.add(topic)
             state = HzColumnState.from_topic(topic, spec.window, spec.width)
-            self.register(state, topic, None, raw=True)
-            self.try_subscribe(self.subscriptions[-1])
+            self.register([state], topic, None, raw=True)
+            self.try_subscribe(self.subscriptions[-1], names_and_types)
             added = True
         return added
 ```
@@ -166,10 +172,9 @@ flowchart TD
 ## Subscribing: validate at the boundary, then trust
 
 ```python
-    def try_subscribe(self, sub: Subscription) -> None:
+    def try_subscribe(self, sub: Subscription, names_and_types) -> None:
         if sub.subscribed or sub.failed:
             return
-        names_and_types = self.node.get_topic_names_and_types()
         try:
             msg_class = resolve_message_type(
                 sub.topic, sub.configured_type, names_and_types
@@ -227,3 +232,7 @@ fan-out column the identical arrival timestamp.
 - **A vanished topic keeps consuming a column slot forever.** Intentional for
   now, but a very long run against a churning graph could accumulate empty
   columns; an optional prune could be offered later.
+- **`scan()`'s `added` return is only consumed by tests.** The flag bubbles up
+  "the column set grew," but the timer callback ignores it — the sampler
+  detects growth on its own by watching the column count. Either use it (a
+  discovery log line) or drop it.

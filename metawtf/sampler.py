@@ -23,12 +23,12 @@ class Sampler:
     def __init__(
         self,
         columns: list[SampledColumn],
-        time: TimeColumn = None,
-        out: TextIO = sys.stdout,
+        time: TimeColumn | None = None,
+        out: TextIO | None = None,
     ):
         self.columns = columns
         self.time = time or TimeColumn()
-        self.out = out
+        self.out = out or sys.stdout
         self.header_width = None
 
     def tick(self, now_monotonic: float, now_wall: datetime) -> None:
@@ -53,16 +53,26 @@ class Sampler:
 
 
 def join_cells(cells: list[tuple[str, int | None]]) -> str:
-    # The comma binds to the value it follows and padding comes after it, so
-    # columns line up in the terminal while the row still imports as CSV.
+    # Cells are RFC-4180 quoted first; then the comma binds to the value it
+    # follows and padding comes after it, so columns line up in the terminal
+    # while the row still imports as CSV.
     parts = []
     last_index = len(cells) - 1
     for index, (text, width) in enumerate(cells):
+        text = quote_cell(text)
         if index < last_index:
             text = f"{text},"
             width = None if width is None else width + 1
         parts.append(pad(text, width))
     return "".join(parts)
+
+
+def quote_cell(text: str) -> str:
+    # A cell containing a comma, quote, or line break is wrapped in quotes with
+    # inner quotes doubled, so a string value cannot corrupt the row's cells.
+    if any(mark in text for mark in ',"\n\r'):
+        return '"' + text.replace('"', '""') + '"'
+    return text
 
 
 def pad(text: str, width: int | None) -> str:

@@ -1,10 +1,16 @@
 # Current Status — Session Handoff
 
-**Last updated:** 2026-07-22
+**Last updated:** 2026-07-23
 
 ## State
 Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). Full suite:
-**112 passed** via `python3 -m pytest test/`.
+**121 passed** via `python3 -m pytest test/`.
+
+Code review 2026-07-23: six fixes landed as chores (CSV cell quoting, rate
+counter bounded while paused, `.claude/worktrees/` untracked, clean startup
+errors, `Sampler` stream default, one graph query per scan); seven follow-ups
+open in `04-tasks/chores.md`. Literate docs for the five changed modules
+regenerated; committed and pushed in the 2026-07-23 checkpoint.
 
 **F01 (TF01): DONE and closed** — echo columns, moved to `done/`.
 

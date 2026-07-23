@@ -103,3 +103,35 @@ def test_header_reprinted_when_column_added():
         "00:00:00.000,1,2",
         "00:00:00.000,1,2",
     ]
+
+
+def test_value_with_comma_is_quoted():
+    out = io.StringIO()
+    columns = [FakeColumn("note", "a,b"), FakeColumn("x", "1")]
+    sampler = Sampler(columns, out=out)
+    sampler.tick(0.0, datetime(2026, 1, 1))
+    assert out.getvalue().splitlines()[1] == '00:00:00.000,"a,b",1'
+
+
+def test_value_with_quote_is_doubled_and_quoted():
+    out = io.StringIO()
+    columns = [FakeColumn("note", 'say "hi"')]
+    sampler = Sampler(columns, out=out)
+    sampler.tick(0.0, datetime(2026, 1, 1))
+    assert out.getvalue().splitlines()[1] == '00:00:00.000,"say ""hi"""'
+
+
+def test_value_with_newline_stays_one_cell():
+    out = io.StringIO()
+    columns = [FakeColumn("note", "l1\nl2")]
+    sampler = Sampler(columns, out=out)
+    sampler.tick(0.0, datetime(2026, 1, 1))
+    assert '"l1\nl2"' in out.getvalue()
+
+
+def test_header_name_with_comma_is_quoted():
+    out = io.StringIO()
+    columns = [FakeColumn("a,b", "1")]
+    sampler = Sampler(columns, out=out)
+    sampler.tick(0.0, datetime(2026, 1, 1))
+    assert out.getvalue().splitlines()[0] == 'time,"a,b"'

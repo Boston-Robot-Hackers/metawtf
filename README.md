@@ -168,7 +168,9 @@ Floats are formatted with **2 decimals**. `width` is a **minimum**: the comma
 sits right after each value and shorter cells are space-padded after it, so
 columns line up in the terminal; a value longer than `width` is printed in full
 (never truncated), so it overflows and nudges that row's later columns out of
-alignment until the next row. The output still imports as CSV.
+alignment until the next row. The output still imports as CSV: any cell
+containing a comma, quote, or newline is quoted per RFC 4180 (inner quotes
+doubled), so string values always occupy a single cell.
 
 ```
 time,          odom_x,    odom_z

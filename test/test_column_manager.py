@@ -22,8 +22,10 @@ class FakeNode:
         self.names_and_types = names_and_types
         self.subscriptions_made = []
         self.callbacks = {}
+        self.graph_queries = 0
 
     def get_topic_names_and_types(self):
+        self.graph_queries += 1
         return self.names_and_types
 
     def get_publishers_info_by_topic(self, topic):
@@ -159,3 +161,18 @@ def test_expander_waits_through_malformed_first_message():
     assert manager.states == []
     node.callbacks["/chatter"](SimpleNamespace(data='{"reached": 3}'))
     assert [state.name for state in manager.states] == ["chatter_reached"]
+
+
+def test_scan_queries_the_graph_once_for_many_pending_columns():
+    node = FakeNode([])
+    config = Config(
+        sample_hz=5.0,
+        columns=[
+            EchoColumn(name="a", topic="/a", field="x"),
+            EchoColumn(name="b", topic="/b", field="x"),
+            EchoColumn(name="c", topic="/c", field="x"),
+        ],
+    )
+    manager = ColumnManager(node, config)
+    manager.scan()
+    assert node.graph_queries == 1

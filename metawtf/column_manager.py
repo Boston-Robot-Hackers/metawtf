@@ -101,15 +101,17 @@ class ColumnManager:
         self.subscriptions.append(sub)
 
     def scan(self) -> bool:
+        # The graph is queried once per scan and the snapshot handed down, not
+        # once per pending subscription — those queries are DDS round-trips.
+        names_and_types = self.node.get_topic_names_and_types()
         for sub in list(self.subscriptions):
-            self.try_subscribe(sub)
+            self.try_subscribe(sub, names_and_types)
         added = False
         for spec in self.match_specs:
-            added = self.scan_match(spec) or added
+            added = self.scan_match(spec, names_and_types) or added
         return added
 
-    def scan_match(self, spec: MatchSpec) -> bool:
-        names_and_types = self.node.get_topic_names_and_types()
+    def scan_match(self, spec: MatchSpec, names_and_types) -> bool:
         added = False
         for topic, _type in match_topics(spec.pattern, names_and_types):
             if topic in self.matched_topics:
@@ -117,14 +119,13 @@ class ColumnManager:
             self.matched_topics.add(topic)
             state = HzColumnState.from_topic(topic, spec.window, spec.width)
             self.register([state], topic, None, raw=True)
-            self.try_subscribe(self.subscriptions[-1])
+            self.try_subscribe(self.subscriptions[-1], names_and_types)
             added = True
         return added
 
-    def try_subscribe(self, sub: Subscription) -> None:
+    def try_subscribe(self, sub: Subscription, names_and_types) -> None:
         if sub.subscribed or sub.failed:
             return
-        names_and_types = self.node.get_topic_names_and_types()
         try:
             msg_class = resolve_message_type(
                 sub.topic, sub.configured_type, names_and_types

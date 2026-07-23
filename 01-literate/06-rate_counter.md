@@ -1,6 +1,6 @@
 ---
-version: "1.0"
-generated: "2026-07-22"
+version: "1.1"
+generated: "2026-07-23"
 ---
 
 # Rate counter: measuring hz the way `ros2 topic hz` does
@@ -50,7 +50,10 @@ misleading number: fewer than two arrivals (no gap to measure), or a zero span
         self.arrivals = deque()
 
     def record(self, now: float) -> None:
+        # Prune here too, not only in rate(): sampling can pause while messages
+        # keep arriving, and the deque must stay bounded regardless.
         self.arrivals.append(now)
+        self.prune(now)
 
     def prune(self, now: float) -> None:
         cutoff = now - self.window
@@ -60,14 +63,19 @@ misleading number: fewer than two arrivals (no gap to measure), or a zero span
 
 Arrivals go on the right; anything older than `now − window` falls off the
 left. A `deque` makes both ends O(1), so the counter stays cheap even for a
-high-rate image or point-cloud topic. Pruning happens at read time inside
-`rate`, so a topic that stops publishing correctly decays to `None` once its
-last two arrivals age out of the window — an idle topic reads empty, not a
-stale non-zero number.
+high-rate image or point-cloud topic. Pruning happens on *both* the write and
+the read path, for different reasons. `rate` prunes so a topic that stops
+publishing correctly decays to `None` once its last two arrivals age out of
+the window — an idle topic reads empty, not a stale non-zero number. `record`
+prunes so the deque stays bounded at roughly `rate × window` entries even
+when nobody is reading — and there is a real case where nobody reads for a
+long time: the tracer's pause key stops row output (no more `rate` calls)
+while subscriptions keep recording, so write-time-only pruning would let
+memory grow without bound for the duration of the pause.
 
 ```mermaid
 flowchart LR
-    R[record now] --> D[(deque of arrivals)]
+    R[record now] --> P1[prune] --> D[(deque of arrivals)]
     Q[rate now] --> PR[prune older than now-window]
     PR --> N{n >= 2 and span > 0?}
     N -->|no| None1[return None]
@@ -87,7 +95,9 @@ that three quick early messages already read 10.0 rather than 1.5.
 - **The window is time-based; `ros2 topic hz` is count-based by default.** Ours
   fits a fixed row cadence better, but a very bursty topic could see the rate
   swing between rows; a small amount of smoothing could be offered as an option.
-- **No maximum size on the deque.** For an extremely high-rate topic the deque
-  holds one entry per message within the window. That is bounded by
-  `rate × window` and fine in practice, but a hard cap would make worst-case
-  memory explicit.
+- **Pruning on `record` assumes a monotonic clock.** Appending and then
+  dropping everything older than `now − window` only keeps a correct window if
+  timestamps never go backwards. The injected clock is `time.monotonic()` in
+  production, so this holds — but it is an assumption the clock-injection
+  design makes easy to keep, and worth keeping in mind if a second caller ever
+  passes a different clock.

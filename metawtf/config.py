@@ -261,6 +261,11 @@ def parse_stale_after(value) -> float | None:
 def load_config(path) -> Config:
     import yaml
 
-    with open(path) as config_file:
-        data = yaml.safe_load(config_file)
+    try:
+        with open(path) as config_file:
+            data = yaml.safe_load(config_file)
+    except OSError as error:
+        raise ConfigError(f"cannot read config {path}: {error}") from error
+    except yaml.YAMLError as error:
+        raise ConfigError(f"invalid YAML in {path}: {error}") from error
     return parse_config(data or {})

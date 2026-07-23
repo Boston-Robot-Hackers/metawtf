@@ -1,6 +1,6 @@
 ---
-version: "1.2"
-generated: "2026-07-22"
+version: "1.3"
+generated: "2026-07-23"
 ---
 
 # Tracer Node: assembling the pieces and running until you quit
@@ -165,8 +165,11 @@ def spin_until_quit(node) -> None:
 
 def main(args=None) -> None:
     config_path = parse_cli(sys.argv[1:])
+    try:
+        config = load_config(config_path)
+    except ConfigError as error:
+        raise SystemExit(f"metawtf: {error}")
     rclpy.init(args=args)
-    config = load_config(config_path)
     node = TracerNode(config)
     try:
         spin_until_quit(node)
@@ -185,6 +188,12 @@ the context down) within a fraction of a second. The `finally` in
 `spin_until_quit` guarantees the terminal is put back into its normal mode
 whether we left via `q`, Ctrl-C, or an exception — a raw-ish terminal left
 behind would make the user's shell unusable.
+
+Note the ordering at the top of `main`: the config is loaded *before*
+`rclpy.init`. A missing file, broken YAML, or a schema violation — all already
+translated to `ConfigError` by `load_config` — becomes a one-line
+`metawtf: ...` `SystemExit` message, not a traceback, and no ROS context is
+ever created for a run that was doomed from the first line.
 
 `main`'s own `finally` handles the rclpy side: both `KeyboardInterrupt` and
 `ExternalShutdownException` are treated as ordinary "time to stop," so neither

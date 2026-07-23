@@ -1,6 +1,6 @@
 ---
-version: "1.2"
-generated: "2026-07-22"
+version: "1.3"
+generated: "2026-07-23"
 ---
 
 # Sampler: turning column state into a CSV stream
@@ -27,12 +27,12 @@ class Sampler:
     def __init__(
         self,
         columns: list[SampledColumn],
-        time: TimeColumn = None,
-        out: TextIO = sys.stdout,
+        time: TimeColumn | None = None,
+        out: TextIO | None = None,
     ):
         self.columns = columns
         self.time = time or TimeColumn()
-        self.out = out
+        self.out = out or sys.stdout
         self.header_width = None
 ```
 
@@ -44,11 +44,13 @@ exact same sampler with zero changes here: anything with a `.name`, a `.width`,
 and a `.sample(now)` is a column, regardless of what it measures. F02 proved
 this out; adding hz required no change to the column contract.
 
-`out` defaults to `sys.stdout` but is injectable, the same trick `load_config`
-uses for the filesystem. `time` is the parsed `TimeColumn` controlling the
-leading timestamp column's format and width; it defaults to `None` (rather than
-a shared `TimeColumn()` instance, which would be a mutable default) and is
-replaced with a fresh default inside the constructor.
+`out` is the output stream, injectable for tests the same way `load_config`
+isolates the filesystem. Both `out` and `time` arrive as `None` and are
+resolved inside the constructor — never as an import-time default argument.
+Writing `out=sys.stdout` directly as a default would capture the stream object
+when the module is *imported*, silently ignoring any later substitution (a test
+runner swapping `sys.stdout`, for instance). And `time` gets a fresh
+`TimeColumn()` per Sampler rather than one shared mutable instance.
 
 ## Two clocks, one tick
 
@@ -108,13 +110,14 @@ the documented CSV caveat: a single file may contain more than one header line.)
 `None` from any column still becomes an empty string, never `"None"` and never
 `0`. Formatting collects `(text, width)` pairs and hands them to `join_cells`.
 
-## Padding: comma first, spaces after
+## Quoting first, then padding: comma first, spaces after
 
 ```python
 def join_cells(cells: list[tuple[str, int | None]]) -> str:
     parts = []
     last_index = len(cells) - 1
     for index, (text, width) in enumerate(cells):
+        text = quote_cell(text)
         if index < last_index:
             text = f"{text},"
             width = None if width is None else width + 1
@@ -122,11 +125,28 @@ def join_cells(cells: list[tuple[str, int | None]]) -> str:
     return "".join(parts)
 
 
+def quote_cell(text: str) -> str:
+    # A cell containing a comma, quote, or line break is wrapped in quotes with
+    # inner quotes doubled, so a string value cannot corrupt the row's cells.
+    if any(mark in text for mark in ',"\n\r'):
+        return '"' + text.replace('"', '""') + '"'
+    return text
+
+
 def pad(text: str, width: int | None) -> str:
     if width is None:
         return text
     return text.ljust(width)
 ```
+
+Before anything joins, each cell passes through `quote_cell`: a value
+containing a comma, double quote, or line break is wrapped in double quotes
+with inner quotes doubled — garden-variety RFC 4180 escaping. Without it, an
+echoed `std_msgs/String` like `a,b` would silently become two cells and
+corrupt the column count of that row — exactly the failure a tool promising
+"imports into a spreadsheet without further processing" cannot ship. Quoting
+happens first so the comma-and-padding logic below treats the quoted text as
+opaque.
 
 The comma binds to the value it terminates, and the padding spaces come
 *after* it — `1.50,      ` rather than `1.50      ,`. Visually the separator
@@ -164,9 +184,9 @@ of that precision.
   discards sub-millisecond precision by truncation, not rounding. Harmless
   for a human-readable timestamp column, but worth knowing if timestamps are
   ever compared numerically across rows.
-- **No CSV escaping.** Cells are joined with a bare `","` — fine for numeric
-  and simple string fields, but a `str`-typed message field containing a
-  literal comma (unlikely for `nav_msgs`-style numeric fields, more likely
-  for arbitrary `std_msgs/String` topics) would silently corrupt the column
-  count of that row. Worth switching to Python's `csv` module if string
-  fields become common.
+- **The sampler and column manager share one mutable list.** `TracerNode`
+  hands the manager's `states` list object to the `Sampler`, and dynamic
+  columns work only because every mutation of that list is in-place. A single
+  future `self.states = [...]` reassignment in the manager would silently
+  freeze the output. Passing a columns provider (or the manager itself)
+  instead would remove the coupling.

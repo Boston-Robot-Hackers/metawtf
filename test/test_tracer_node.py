@@ -12,12 +12,14 @@ import pytest
 rclpy = pytest.importorskip("rclpy")
 
 import io
+import sys
 from pathlib import Path
 
 from metawtf.config import Config, EchoColumn
 from metawtf.tracer_node import (
     TracerNode,
     default_config_path,
+    main,
     parse_cli,
     watch_keys,
 )
@@ -119,3 +121,12 @@ def test_on_message_updates_echo_state():
     node.states[0].on_message(SimpleNamespace(data=1.0), now=0.0)
     assert node.states[0].sample(0.0) == "1.00"
     node.destroy_node()
+
+
+def test_main_exits_cleanly_on_missing_config(tmp_path, monkeypatch):
+    missing = tmp_path / "nope.yaml"
+    monkeypatch.setattr(sys, "argv", ["metawtf", "-f", str(missing)])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+    assert excinfo.value.code != 0
+    assert "cannot read config" in str(excinfo.value)

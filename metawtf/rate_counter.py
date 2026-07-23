@@ -22,7 +22,10 @@ class RateCounter:
         self.arrivals = deque()
 
     def record(self, now: float) -> None:
+        # Prune here too, not only in rate(): sampling can pause while messages
+        # keep arriving, and the deque must stay bounded regardless.
         self.arrivals.append(now)
+        self.prune(now)
 
     def prune(self, now: float) -> None:
         cutoff = now - self.window

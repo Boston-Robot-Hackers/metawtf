@@ -8,7 +8,7 @@ Open Source Under MIT license
 import pytest
 import yaml
 
-from metawtf.config import ConfigError, parse_config
+from metawtf.config import ConfigError, load_config, parse_config
 
 
 def load(yaml_text: str):
@@ -335,3 +335,15 @@ def test_non_bool_json_raises():
             "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
             "    json: yes_please\n"
         )
+
+
+def test_load_config_missing_file_raises_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="cannot read config"):
+        load_config(tmp_path / "nope.yaml")
+
+
+def test_load_config_invalid_yaml_raises_config_error(tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("columns: [unclosed\n")
+    with pytest.raises(ConfigError, match="invalid YAML"):
+        load_config(bad)

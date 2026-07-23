@@ -51,3 +51,14 @@ def test_simultaneous_arrivals_return_none():
     counter.record(1.0)
     counter.record(1.0)
     assert counter.rate(1.0) is None
+
+
+def test_record_prunes_without_rate_calls():
+    # Sampling can pause while messages keep arriving; record must keep the
+    # deque bounded even when rate() is never called.
+    counter = RateCounter(window=1.0)
+    now = 0.0
+    for _ in range(1000):
+        counter.record(now)
+        now += 0.01
+    assert len(counter.arrivals) <= 101

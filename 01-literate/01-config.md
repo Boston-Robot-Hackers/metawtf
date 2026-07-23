@@ -1,6 +1,6 @@
 ---
-version: "1.2"
-generated: "2026-07-22"
+version: "1.3"
+generated: "2026-07-23"
 ---
 
 # Config: turning `metawtf.yaml` into a typed `Config`
@@ -188,15 +188,24 @@ the same topic explicit `name`s to tell them apart.)
 def load_config(path) -> Config:
     import yaml
 
-    with open(path) as config_file:
-        data = yaml.safe_load(config_file)
+    try:
+        with open(path) as config_file:
+            data = yaml.safe_load(config_file)
+    except OSError as error:
+        raise ConfigError(f"cannot read config {path}: {error}") from error
+    except yaml.YAMLError as error:
+        raise ConfigError(f"invalid YAML in {path}: {error}") from error
     return parse_config(data or {})
 ```
 
 `parse_config` takes a plain `dict`, not a file path — so every validation
 rule above is unit-tested by handing it `yaml.safe_load(some_string)`
 directly, with no filesystem or PyYAML mocking required. `load_config` is
-the only piece that touches disk, and it stays a two-line wrapper.
+the only piece that touches disk, and it carries one more boundary duty:
+translating I/O and YAML failures into the same `ConfigError` the validator
+raises. A missing file, broken YAML, and a schema violation now all surface
+identically — one clean `metawtf: ...` line at startup instead of a
+traceback (the catching half lives in the tracer node chapter).
 
 ## Observations for future improvement
 

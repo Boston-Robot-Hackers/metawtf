@@ -18,7 +18,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 from metawtf.column_manager import ColumnManager
-from metawtf.config import Config, load_config
+from metawtf.config import Config, ConfigError, load_config
 from metawtf.sampler import Sampler
 
 CONFIG_FILENAME = "metawtf.yaml"
@@ -131,8 +131,11 @@ def spin_until_quit(node) -> None:
 
 def main(args=None) -> None:
     config_path = parse_cli(sys.argv[1:])
+    try:
+        config = load_config(config_path)
+    except ConfigError as error:
+        raise SystemExit(f"metawtf: {error}")
     rclpy.init(args=args)
-    config = load_config(config_path)
     node = TracerNode(config)
     try:
         spin_until_quit(node)
