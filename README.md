@@ -45,13 +45,13 @@ needed. It stays available in any shell where the workspace is sourced.
 ```bash
 metawtf                  # prints CSV rows to the terminal
 metawtf > run.csv        # capture for a spreadsheet
-metawtf -f other.yaml    # use a config other than ./metawtf.yaml
+metawtf -f other.conf    # use a config other than ./metawtf.conf
 metawtf -h               # show help and exit
 ```
 
-On start it reads `metawtf.yaml` from the **current working directory** (or the
+On start it reads `metawtf.conf` from the **current working directory** (or the
 file given with `-f`). Edit it and re-run — no rebuild needed.
-(`metawtf/metawtf.yaml` in the repo is a sample to copy.)
+(`metawtf/metawtf.conf` in the repo is a sample to copy.)
 
 **Keys while running** (no Enter needed): `space` pauses/resumes row output,
 `h` shows help, `q` quits (`Ctrl-C` also works). It shuts down cleanly with no
@@ -59,40 +59,32 @@ traceback. When stdin is not a terminal (e.g. piped), only `Ctrl-C` applies.
 
 ### Configuration reference
 
+One directive per line: `name [positional] key=value ...`. Blank lines and
+lines starting with `#` are ignored (no trailing comments). Values are bare
+tokens — no quoting, no spaces inside a value; lists are comma-separated.
 Any key not listed below is rejected with a clear error at startup.
 
-```yaml
-sample_hz: 5.0            # rows per second (default 5.0)
-time:                     # optional; configures the leading timestamp column
-  format: "%H:%M:%S"      # optional strftime; default keeps HH:MM:SS.mmm
-  width: 12               # optional; min column width
-columns:
-  - name: odom_x          # column header (default: sanitized topic)
-    metric: echo
-    topic: /odom
-    field: pose.pose.position.x
-    type: nav_msgs/msg/Odometry   # optional; resolved from the graph if omitted
-    stale_after: 2.0      # optional; blank cell if no msg within N seconds
-    width: 10             # optional; min column width
-  - metric: echo          # a JSON string inside a field, one column per key
-    topic: /explore/status
-    field: data
-    json: true
-    subfields: [reached, failed]  # omit to expand all top-level keys
-  - metric: hz            # message receive rate
-    match: "^/tf"         # regex over graph topics; one column per match
-    window: 2.0           # optional rolling window (default 2.0, >= sample period)
+```
+sample 5.0                  # rows per second (default 5.0)
+time format=%H:%M:%S width=12   # optional leading timestamp column
+
+echo /odom field=pose.pose.position.x name=odom_x stale_after=2.0 width=10
+echo /explore/status field=data json=true subfields=reached,failed
+hz /cmd_vel window=2.0      # receive rate of one topic
+hz match=^/tf window=2.0    # one rate column per topic matching the regex
+proc_cpu name=cpu_nav2 process=controller_server
+sys_cpu name=cpu_idle mode=idle
 ```
 
-#### Top level
+#### Top-level directives
 
-| Key         | Required | Type   | Default | Rules                    |
-|-------------|----------|--------|---------|--------------------------|
-| `sample_hz` | no       | number | `5.0`   | must be > 0              |
-| `columns`   | yes      | list   | —       | must be a non-empty list |
-| `time`      | no       | map    | —       | see below                |
+| Directive | Required | Meaning                                             |
+|-----------|----------|-----------------------------------------------------|
+| `sample`  | no       | rows per second; positional value must be > 0 (default `5.0`) |
+| `time`    | no       | configures the leading timestamp column; see below  |
+| column directives | yes, at least one | `echo`, `hz`, `proc_cpu`, `sys_cpu`; one per line |
 
-#### `time` block (the leading timestamp column)
+#### `time` directive (the leading timestamp column)
 
 | Key      | Required | Type   | Default          | Rules                                             |
 |----------|----------|--------|------------------|---------------------------------------------------|
@@ -105,25 +97,24 @@ Reports the latest value of a message field, sampled at each tick.
 
 | Key           | Required | Type   | Default                          | Rules                                             |
 |---------------|----------|--------|----------------------------------|---------------------------------------------------|
-| `metric`      | yes      | string | —                                | must be `echo`                                    |
-| `topic`       | yes      | string | —                                | non-empty; the topic to subscribe to             |
+| `topic`       | yes      | string | —                                | positional (or `topic=`); the topic to subscribe to |
 | `field`       | yes      | string | —                                | dotted attribute path, e.g. `pose.pose.position.x`; no array indexing |
 | `name`        | no       | string | sanitized topic                  | the CSV column header                             |
 | `type`        | no       | string | resolved from the graph          | e.g. `nav_msgs/msg/Odometry`; needed only if the topic isn't up at start or is multi-type |
 | `stale_after` | no       | number | never stale                      | must be > 0; blank the cell if no message arrives within this many seconds |
-| `width`       | no       | int    | natural width                    | must be > 0; pads the cell to a minimum width     |
-| `json`        | no       | bool   | `false`                          | parse the extracted field as a JSON string before selecting |
-| `subfields`   | no       | list   | all top-level keys               | requires `json: true`; dotted keys reach nested objects (`payload.count`) |
+| `width`       | no       | int    | `8`                              | must be > 0; pads the cell to a minimum width     |
+| `json`        | no       | bool   | `false`                          | `json=true` parses the extracted field as a JSON string before selecting |
+| `subfields`   | no       | list   | all top-level keys               | comma-separated; requires `json=true`; dotted keys reach nested objects (`payload.count`) |
 
 A bad `field` path (e.g. a typo) does not crash the trace: that cell shows `?`
 until a readable message arrives.
 
-#### JSON subfields (`json: true`)
+#### JSON subfields (`json=true`)
 
 Some topics carry structured data as a JSON string inside a single field
 (e.g. `/explore/status`, a `std_msgs/msg/String` whose `data` is
-`{"state": "idle", "reached": 0, "failed": 0}`). With `json: true`, one config
-entry expands into one plottable column per selected key:
+`{"state": "idle", "reached": 0, "failed": 0}`). With `json=true`, one config
+line expands into one plottable column per selected key:
 
 - Column names are `<sanitized topic>_<key with dots as underscores>`
   (`explore_status_reached`). An explicit `name` is allowed only when
@@ -143,12 +134,11 @@ formatted with 2 decimals. Give exactly one of `topic` or `match`.
 
 | Key      | Required | Type   | Default            | Rules                                             |
 |----------|----------|--------|--------------------|---------------------------------------------------|
-| `metric` | yes      | string | —                  | must be `hz`                                       |
-| `topic`  | one-of   | string | —                  | a single topic; column name defaults to the sanitized topic |
+| `topic`  | one-of   | string | —                  | positional (or `topic=`); a single topic; column name defaults to the sanitized topic |
 | `match`  | one-of   | string | —                  | regex over graph topic names; one column per matched topic, added live as topics appear |
 | `window` | no       | number | `2.0`              | rolling window in seconds; must be >= the sample period |
 | `name`   | no       | string | sanitized topic    | allowed with `topic`; **forbidden** with `match`   |
-| `width`  | no       | int    | natural width      | must be > 0; pads the cell to a minimum width      |
+| `width`  | no       | int    | `6`                | must be > 0; pads the cell to a minimum width      |
 
 Notes:
 - A default `name` (echo or hz, single-topic or per-`match`-topic) strips the
@@ -165,17 +155,21 @@ Notes:
 Each tick prints the timestamp column plus one value per column. Missing, stale,
 or not-yet-published data produces an **empty cell** — never `0`, never a crash.
 Floats are formatted with **2 decimals**. `width` is a **minimum**: the comma
-sits right after each value and shorter cells are space-padded after it, so
-columns line up in the terminal; a value longer than `width` is printed in full
-(never truncated), so it overflows and nudges that row's later columns out of
-alignment until the next row. The output still imports as CSV: any cell
+sits right after each value followed by a single space, and shorter cells are
+space-padded after that, so columns line up in the terminal; a value longer
+than `width` is printed in full (never truncated), so it overflows and nudges
+that row's later columns out of alignment until the next row. Columns that
+omit `width` use the metric's default (`8` for echo, `6` for hz and proc_cpu);
+the time column is unpadded unless given an explicit `width`. Either way a
+column is widened as needed to fit its header name, so the header row always
+lines up with the data rows. The output still imports as CSV: any cell
 containing a comma, quote, or newline is quoted per RFC 4180 (inner quotes
 doubled), so string values always occupy a single cell.
 
 ```
-time,          odom_x,    odom_z
-12:00:01.200,  ,
-12:00:01.400,  1.21,      0.04
+time, odom_x,   odom_z
+12:00:01.200, 1.21,     0.04
+12:00:01.400, 1.22,     0.05
 ```
 
 ## Development

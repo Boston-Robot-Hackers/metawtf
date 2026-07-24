@@ -5,7 +5,7 @@ live processes or a ROS graph: the /proc root, clock, and stat reader are
 injectable.
 
 ## T01 — Schema: proc_cpu entries
-**Status**: not done
+**Status**: done
 **Description**: Extend the column schema: `metric: proc_cpu` requires `name`
 and `process` (regex matched against cmdline, compiled at load; invalid regex
 → clear error).
@@ -13,7 +13,7 @@ and `process` (regex matched against cmdline, compiled at load; invalid regex
 bad regex → clear errors.
 
 ## T02 — /proc/<pid>/stat parser
-**Status**: not done
+**Status**: done
 **Description**: Pure function from stat-line string to total jiffies
 (utime + stime, fields 14 and 15). Split after the LAST `)` so comm values
 with spaces or parens parse correctly.
@@ -21,7 +21,7 @@ with spaces or parens parse correctly.
 and parentheses, yield the expected jiffies sum.
 
 ## T03 — Process resolver
-**Status**: not done
+**Status**: done
 **Description**: Scan an injectable proc root (default `/proc`): for each
 numeric pid directory read `cmdline` (NULs → spaces), keep pids matching the
 regex; skip our own pid; unreadable/empty cmdline → skip. Returns a pid set.
@@ -29,7 +29,7 @@ regex; skip our own pid; unreadable/empty cmdline → skip. Returns a pid set.
 cmdline, non-matching entry, empty cmdline, own-pid exclusion.
 
 ## T04 — CPU tracker
-**Status**: not done
+**Status**: done
 **Description**: State `{pid: (jiffies, wall_t)}`. On `sample(now)`: resolve
 pids, read jiffies per pid; where a previous baseline exists accumulate
 (Δjiffies / clk_tck) / Δwall × 100; store the new baseline; drop vanished pids.
@@ -40,10 +40,10 @@ the expected percent (including > 100 for two "cores" of work); first sample
 None; vanished pid excluded; two pids summed.
 
 ## T05 — proc_cpu column integration
-**Status**: not done
-**Description**: Column `sample()` returns the percent formatted `%.1f`, or
-None (empty cell) when the process is absent or newly seen. Wired into the
-sampler like other metrics.
+**Status**: done
+**Description**: Column `sample()` returns the percent formatted `%.1f%%`
+(e.g. `100.0%`), or None (empty cell) when the process is absent or newly
+seen. Wired into the sampler like other metrics.
 **Test**: Unit test — exact row output with a cpu value, and empty cell when
 the process is absent.
 

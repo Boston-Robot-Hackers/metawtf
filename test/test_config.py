@@ -5,26 +5,19 @@ Author: Pito Salas and Claude Code
 Open Source Under MIT license
 """
 
+import textwrap
+
 import pytest
-import yaml
 
 from metawtf.config import ConfigError, load_config, parse_config
 
 
-def load(yaml_text: str):
-    return parse_config(yaml.safe_load(yaml_text))
+def load(conf_text: str):
+    return parse_config(textwrap.dedent(conf_text))
 
 
 def test_minimal_valid_config_uses_default_sample_hz():
-    config = load(
-        """
-        columns:
-          - name: odom_x
-            metric: echo
-            topic: /odom
-            field: pose.pose.position.x
-        """
-    )
+    config = load("echo /odom field=pose.pose.position.x name=odom_x\n")
     assert config.sample_hz == 5.0
     assert config.columns[0].name == "odom_x"
     assert config.columns[0].topic == "/odom"
@@ -36,13 +29,8 @@ def test_minimal_valid_config_uses_default_sample_hz():
 def test_explicit_sample_hz_and_optional_fields():
     config = load(
         """
-        sample_hz: 10
-        columns:
-          - metric: echo
-            topic: /odom
-            type: nav_msgs/msg/Odometry
-            field: pose.pose.position.x
-            stale_after: 2.0
+        sample 10
+        echo /odom field=pose.pose.position.x type=nav_msgs/msg/Odometry stale_after=2.0
         """
     )
     assert config.sample_hz == 10.0
@@ -51,77 +39,47 @@ def test_explicit_sample_hz_and_optional_fields():
 
 
 def test_default_name_is_sanitized_topic():
-    config = load(
-        """
-        columns:
-          - metric: echo
-            topic: /robot/odom
-            field: pose.pose.position.x
-        """
-    )
+    config = load("echo /robot/odom field=pose.pose.position.x\n")
     assert config.columns[0].name == "robot_odom"
 
 
 def test_missing_field_raises():
     with pytest.raises(ConfigError):
-        load("columns:\n  - metric: echo\n    topic: /odom\n")
+        load("echo /odom\n")
 
 
 def test_non_numeric_sample_hz_raises():
     with pytest.raises(ConfigError):
-        load(
-            "sample_hz: fast\ncolumns:\n  - metric: echo\n    topic: /odom\n"
-            "    field: x\n"
-        )
+        load("sample fast\necho /odom field=x\n")
 
 
 def test_zero_sample_hz_raises():
     with pytest.raises(ConfigError):
-        load(
-            "sample_hz: 0\ncolumns:\n  - metric: echo\n    topic: /odom\n"
-            "    field: x\n"
-        )
+        load("sample 0\necho /odom field=x\n")
 
 
-def test_unknown_top_level_key_raises():
-    with pytest.raises(ConfigError):
-        load("columns: []\nbogus: 1\n")
-
-
-def test_unknown_metric_raises():
-    with pytest.raises(ConfigError):
-        load("columns:\n  - metric: bogus\n    topic: /odom\n    field: x\n")
+def test_unknown_directive_raises():
+    with pytest.raises(ConfigError, match="unknown directive"):
+        load("bogus 1\necho /odom field=x\n")
 
 
 def test_unknown_column_key_raises():
-    with pytest.raises(ConfigError):
-        load(
-            "columns:\n  - metric: echo\n    topic: /odom\n    field: x\n"
-            "    bogus: 1\n"
-        )
+    with pytest.raises(ConfigError, match="unknown key"):
+        load("echo /odom field=x bogus=1\n")
 
 
 def test_invalid_stale_after_raises():
     with pytest.raises(ConfigError):
-        load(
-            "columns:\n  - metric: echo\n    topic: /odom\n    field: x\n"
-            "    stale_after: -1\n"
-        )
+        load("echo /odom field=x stale_after=-1\n")
 
 
-def test_empty_columns_list_raises():
-    with pytest.raises(ConfigError):
-        load("columns: []\n")
+def test_no_column_directives_raises():
+    with pytest.raises(ConfigError, match="no column"):
+        load("sample 5\n")
 
 
 def test_hz_single_topic_parses_with_default_window():
-    config = load(
-        """
-        columns:
-          - metric: hz
-            topic: /tf
-        """
-    )
+    config = load("hz /tf\n")
     column = config.columns[0]
     assert column.topic == "/tf"
     assert column.match is None
@@ -130,14 +88,7 @@ def test_hz_single_topic_parses_with_default_window():
 
 
 def test_hz_match_compiles_regex_and_has_no_name():
-    config = load(
-        """
-        columns:
-          - metric: hz
-            match: "^/tf"
-            window: 3.0
-        """
-    )
+    config = load("hz match=^/tf window=3.0\n")
     column = config.columns[0]
     assert column.topic is None
     assert column.match.pattern == "^/tf"
@@ -148,12 +99,8 @@ def test_hz_match_compiles_regex_and_has_no_name():
 def test_hz_mixed_with_echo_columns():
     config = load(
         """
-        columns:
-          - metric: echo
-            topic: /odom
-            field: pose.pose.position.x
-          - metric: hz
-            topic: /chatter
+        echo /odom field=pose.pose.position.x
+        hz /chatter
         """
     )
     assert config.columns[0].field == "pose.pose.position.x"
@@ -162,123 +109,101 @@ def test_hz_mixed_with_echo_columns():
 
 def test_hz_topic_and_match_together_raises():
     with pytest.raises(ConfigError):
-        load("columns:\n  - metric: hz\n    topic: /tf\n    match: '^/tf'\n")
+        load("hz /tf match=^/tf\n")
 
 
 def test_hz_neither_topic_nor_match_raises():
     with pytest.raises(ConfigError):
-        load("columns:\n  - metric: hz\n")
+        load("hz\n")
 
 
 def test_hz_bad_regex_raises():
-    with pytest.raises(ConfigError):
-        load("columns:\n  - metric: hz\n    match: '['\n")
+    with pytest.raises(ConfigError, match="invalid regex"):
+        load("hz match=[\n")
 
 
 def test_hz_window_below_sample_period_raises():
-    with pytest.raises(ConfigError):
-        load(
-            "sample_hz: 5.0\ncolumns:\n  - metric: hz\n    topic: /tf\n"
-            "    window: 0.1\n"
-        )
+    with pytest.raises(ConfigError, match="window"):
+        load("sample 5.0\nhz /tf window=0.1\n")
+
+
+def test_hz_window_checked_even_when_sample_comes_later():
+    with pytest.raises(ConfigError, match="window"):
+        load("hz /tf window=0.1\nsample 5.0\n")
 
 
 def test_hz_name_with_match_raises():
-    with pytest.raises(ConfigError):
-        load("columns:\n  - metric: hz\n    match: '^/tf'\n    name: foo\n")
-
-
-def test_hz_unknown_key_raises():
-    with pytest.raises(ConfigError):
-        load("columns:\n  - metric: hz\n    topic: /tf\n    bogus: 1\n")
+    with pytest.raises(ConfigError, match="'name'"):
+        load("hz match=^/tf name=foo\n")
 
 
 def test_width_parses_on_echo_and_hz_columns():
     config = load(
         """
-        columns:
-          - metric: echo
-            topic: /odom
-            field: pose.pose.position.x
-            width: 10
-          - metric: hz
-            topic: /tf
-            width: 6
+        echo /odom field=pose.pose.position.x width=10
+        hz /tf width=6
         """
     )
     assert config.columns[0].width == 10
     assert config.columns[1].width == 6
 
 
-def test_width_defaults_to_none():
+def test_width_defaults_per_metric_when_omitted():
     config = load(
-        "columns:\n  - metric: echo\n    topic: /odom\n    field: x\n"
+        """
+        echo /odom field=x
+        hz /tf
+        proc_cpu name=cpu process=loop
+        sys_cpu name=idle mode=idle
+        """
     )
-    assert config.columns[0].width is None
+    assert config.columns[0].width == 8
+    assert config.columns[1].width == 6
+    assert config.columns[2].width == 6
+    assert config.columns[3].width == 6
 
 
 def test_non_integer_width_raises():
-    with pytest.raises(ConfigError):
-        load(
-            "columns:\n  - metric: echo\n    topic: /odom\n    field: x\n"
-            "    width: 3.5\n"
-        )
+    with pytest.raises(ConfigError, match="integer"):
+        load("echo /odom field=x width=3.5\n")
 
 
 def test_zero_width_raises():
-    with pytest.raises(ConfigError):
-        load(
-            "columns:\n  - metric: echo\n    topic: /odom\n    field: x\n"
-            "    width: 0\n"
-        )
+    with pytest.raises(ConfigError, match="> 0"):
+        load("echo /odom field=x width=0\n")
 
 
 def test_time_defaults_when_absent():
-    config = load("columns:\n  - metric: echo\n    topic: /odom\n    field: x\n")
+    config = load("echo /odom field=x\n")
     assert config.time.format is None
     assert config.time.width is None
 
 
 def test_time_format_and_width_parse():
-    config = load(
-        """
-        time:
-          format: "%H:%M:%S"
-          width: 12
-        columns:
-          - metric: echo
-            topic: /odom
-            field: x
-        """
-    )
+    config = load("time format=%H:%M:%S width=12\necho /odom field=x\n")
     assert config.time.format == "%H:%M:%S"
     assert config.time.width == 12
 
 
 def test_time_unknown_key_raises():
-    with pytest.raises(ConfigError):
-        load(
-            "time:\n  bogus: 1\ncolumns:\n  - metric: echo\n"
-            "    topic: /odom\n    field: x\n"
-        )
+    with pytest.raises(ConfigError, match="unknown key"):
+        load("time bogus=1\necho /odom field=x\n")
+
+
+def test_time_positional_raises():
+    with pytest.raises(ConfigError, match="positional"):
+        load("time 3\necho /odom field=x\n")
 
 
 def test_plain_echo_has_json_false_and_no_subfields():
-    config = load("columns:\n  - metric: echo\n    topic: /odom\n    field: x\n")
+    config = load("echo /odom field=x\n")
     assert config.columns[0].is_json is False
     assert config.columns[0].subfields is None
 
 
 def test_json_subfields_parse():
     config = load(
-        """
-        columns:
-          - metric: echo
-            topic: /explore/status
-            field: data
-            json: true
-            subfields: [reached, failed]
-        """
+        "echo /explore/status field=data json=true subfields=reached,failed\n"
     )
     column = config.columns[0]
     assert column.is_json is True
@@ -287,33 +212,24 @@ def test_json_subfields_parse():
 
 
 def test_subfields_without_json_raises():
-    with pytest.raises(ConfigError):
-        load(
-            "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
-            "    subfields: [a]\n"
-        )
+    with pytest.raises(ConfigError, match="json"):
+        load("echo /s field=data subfields=a\n")
 
 
 def test_name_with_multiple_subfields_raises():
-    with pytest.raises(ConfigError):
-        load(
-            "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
-            "    json: true\n    subfields: [a, b]\n    name: foo\n"
-        )
+    with pytest.raises(ConfigError, match="'name'"):
+        load("echo /s field=data json=true subfields=a,b name=foo\n")
 
 
 def test_name_with_single_subfield_is_column_header():
-    config = load(
-        "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
-        "    json: true\n    subfields: [reached]\n    name: foo\n"
-    )
+    config = load("echo /s field=data json=true subfields=reached name=foo\n")
     assert config.columns[0].subfield_names == ["foo"]
 
 
 def test_subfield_names_derive_from_topic_and_keys():
     config = load(
-        "columns:\n  - metric: echo\n    topic: /explore/status\n"
-        "    field: data\n    json: true\n    subfields: [reached, payload.count]\n"
+        "echo /explore/status field=data json=true"
+        " subfields=reached,payload.count\n"
     )
     assert config.columns[0].subfield_names == [
         "explore_status_reached",
@@ -321,29 +237,149 @@ def test_subfield_names_derive_from_topic_and_keys():
     ]
 
 
-def test_empty_subfields_list_raises():
+def test_empty_subfields_value_raises():
     with pytest.raises(ConfigError):
-        load(
-            "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
-            "    json: true\n    subfields: []\n"
-        )
+        load("echo /s field=data json=true subfields=\n")
 
 
 def test_non_bool_json_raises():
-    with pytest.raises(ConfigError):
-        load(
-            "columns:\n  - metric: echo\n    topic: /s\n    field: data\n"
-            "    json: yes_please\n"
-        )
+    with pytest.raises(ConfigError, match="true or false"):
+        load("echo /s field=data json=yes_please\n")
+
+
+def test_proc_cpu_parses_with_compiled_regex():
+    config = load("proc_cpu name=cpu_loop process=busyloop\n")
+    column = config.columns[0]
+    assert column.name == "cpu_loop"
+    assert column.process.pattern == "busyloop"
+    assert column.width == 6
+
+
+def test_proc_cpu_width_parses():
+    config = load("proc_cpu name=c process=x width=8\n")
+    assert config.columns[0].width == 8
+
+
+def test_proc_cpu_missing_name_raises():
+    with pytest.raises(ConfigError, match="'name'"):
+        load("proc_cpu process=x\n")
+
+
+def test_proc_cpu_missing_process_raises():
+    with pytest.raises(ConfigError, match="'process'"):
+        load("proc_cpu name=c\n")
+
+
+def test_proc_cpu_bad_regex_raises():
+    with pytest.raises(ConfigError, match="invalid regex"):
+        load("proc_cpu name=c process=[\n")
+
+
+def test_proc_cpu_unknown_key_raises():
+    with pytest.raises(ConfigError, match="unknown key"):
+        load("proc_cpu name=c process=x topic=/t\n")
+
+
+def test_proc_cpu_positional_raises():
+    with pytest.raises(ConfigError, match="positional"):
+        load("proc_cpu /x name=c process=x\n")
+
+
+def test_sys_cpu_parses_with_default_width():
+    config = load("sys_cpu name=cpu_idle mode=idle\n")
+    column = config.columns[0]
+    assert column.name == "cpu_idle"
+    assert column.mode == "idle"
+    assert column.width == 6
+
+
+def test_sys_cpu_width_parses():
+    config = load("sys_cpu name=c mode=busy width=9\n")
+    assert config.columns[0].width == 9
+
+
+def test_sys_cpu_missing_name_raises():
+    with pytest.raises(ConfigError, match="'name'"):
+        load("sys_cpu mode=busy\n")
+
+
+def test_sys_cpu_missing_mode_raises():
+    with pytest.raises(ConfigError, match="'mode'"):
+        load("sys_cpu name=c\n")
+
+
+def test_sys_cpu_bad_mode_raises():
+    with pytest.raises(ConfigError, match="'mode'"):
+        load("sys_cpu name=c mode=user\n")
+
+
+def test_sys_cpu_unknown_key_raises():
+    with pytest.raises(ConfigError, match="unknown key"):
+        load("sys_cpu name=c mode=busy process=x\n")
+
+
+def test_comments_and_blank_lines_are_skipped():
+    config = load(
+        """
+        # a comment
+
+        sample 2
+          # an indented comment
+        echo /odom field=x
+        """
+    )
+    assert config.sample_hz == 2.0
+    assert len(config.columns) == 1
+
+
+def test_repeated_key_raises():
+    with pytest.raises(ConfigError, match="repeated key"):
+        load("echo /odom field=x field=y\n")
+
+
+def test_two_positionals_raise():
+    with pytest.raises(ConfigError, match="positional"):
+        load("echo /odom /other field=x\n")
+
+
+def test_topic_given_positionally_and_as_key_raises():
+    with pytest.raises(ConfigError, match="topic given twice"):
+        load("echo /odom topic=/other field=x\n")
+
+
+def test_malformed_token_raises():
+    with pytest.raises(ConfigError, match="malformed token"):
+        load("echo /odom field=\n")
+
+
+def test_repeated_sample_directive_raises():
+    with pytest.raises(ConfigError, match="repeated 'sample'"):
+        load("sample 2\nsample 3\necho /odom field=x\n")
+
+
+def test_repeated_time_directive_raises():
+    with pytest.raises(ConfigError, match="repeated 'time'"):
+        load("time width=7\ntime width=8\necho /odom field=x\n")
+
+
+def test_sample_with_options_raises():
+    with pytest.raises(ConfigError, match="no key=value"):
+        load("sample 2 width=3\necho /odom field=x\n")
+
+
+def test_error_names_the_line_number():
+    with pytest.raises(ConfigError, match="line 2"):
+        load("echo /odom field=x\nhz\n")
 
 
 def test_load_config_missing_file_raises_config_error(tmp_path):
     with pytest.raises(ConfigError, match="cannot read config"):
-        load_config(tmp_path / "nope.yaml")
+        load_config(tmp_path / "nope.conf")
 
 
-def test_load_config_invalid_yaml_raises_config_error(tmp_path):
-    bad = tmp_path / "bad.yaml"
-    bad.write_text("columns: [unclosed\n")
-    with pytest.raises(ConfigError, match="invalid YAML"):
-        load_config(bad)
+def test_load_config_reads_conf_file(tmp_path):
+    conf = tmp_path / "metawtf.conf"
+    conf.write_text("sample 2\necho /odom field=x\n")
+    config = load_config(conf)
+    assert config.sample_hz == 2.0
+    assert config.columns[0].topic == "/odom"

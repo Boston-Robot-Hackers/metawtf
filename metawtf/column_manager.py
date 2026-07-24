@@ -9,7 +9,13 @@ import json
 import time
 from dataclasses import dataclass
 
-from metawtf.config import Config, EchoColumn, subfield_name
+from metawtf.config import (
+    Config,
+    EchoColumn,
+    ProcCpuColumn,
+    SysCpuColumn,
+    subfield_name,
+)
 from metawtf.echo_column import EchoColumnState
 from metawtf.field_extract import FieldPathError, extract_field
 from metawtf.hz_column import HzColumnState
@@ -19,7 +25,9 @@ from metawtf.msg_type import (
     TopicNotFoundError,
     resolve_message_type,
 )
+from metawtf.proc_cpu_column import ProcCpuColumnState
 from metawtf.qos_select import select_qos
+from metawtf.sys_cpu_column import SysCpuColumnState
 from metawtf.topic_match import match_topics
 
 
@@ -47,7 +55,9 @@ class ColumnManager:
     their topic appears. `match` hz specs and `json` echo columns without an
     explicit key list grow the column set at runtime, so the sampler reprints
     its header. One subscription may feed several column states (an echo `json`
-    column with `subfields`, or a discovered set of keys).
+    column with `subfields`, or a discovered set of keys). `proc_cpu` and
+    `sys_cpu` columns have no topic at all: their states are fixed from config
+    and sample /proc.
     """
 
     def __init__(self, node, config: Config):
@@ -62,6 +72,16 @@ class ColumnManager:
     def add_config_column(self, column) -> None:
         if isinstance(column, EchoColumn):
             self.add_echo_column(column)
+        elif isinstance(column, ProcCpuColumn):
+            # No topic, no subscription: the state samples /proc on each tick.
+            state = ProcCpuColumnState(
+                column.name, column.process, column.width
+            )
+            self.states.append(state)
+        elif isinstance(column, SysCpuColumn):
+            # Same shape as proc_cpu: no topic, the state reads /proc/stat.
+            state = SysCpuColumnState(column.name, column.mode, column.width)
+            self.states.append(state)
         elif column.match is not None:
             self.match_specs.append(
                 MatchSpec(column.match, column.window, column.width)

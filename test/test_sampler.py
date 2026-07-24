@@ -29,8 +29,8 @@ def test_header_and_row_format():
     wall = datetime(2026, 1, 1, 12, 0, 1, 200000)
     sampler.tick(now_monotonic=0.0, now_wall=wall)
     lines = out.getvalue().splitlines()
-    assert lines[0] == "time,odom_x,odom_z"
-    assert lines[1] == "12:00:01.200,1.5,"
+    assert lines[0] == "time, odom_x, odom_z"
+    assert lines[1] == "12:00:01.200, 1.5, "
 
 
 def test_header_only_printed_once():
@@ -41,7 +41,7 @@ def test_header_only_printed_once():
     sampler.tick(0.0, wall)
     sampler.tick(1.0, wall)
     lines = out.getvalue().splitlines()
-    assert lines.count("time,a") == 1
+    assert lines.count("time, a") == 1
     assert len(lines) == 3
 
 
@@ -52,8 +52,8 @@ def test_width_pads_header_and_cells_but_keeps_commas():
     wall = datetime(2026, 1, 1, 12, 0, 1, 200000)
     sampler.tick(now_monotonic=0.0, now_wall=wall)
     lines = out.getvalue().splitlines()
-    assert lines[0] == "time,cpu,     odom_z"
-    assert lines[1] == "12:00:01.200,1.5,     "
+    assert lines[0] == "time, cpu,      odom_z"
+    assert lines[1] == "12:00:01.200, 1.5,      "
 
 
 def test_time_format_and_width_applied():
@@ -64,8 +64,8 @@ def test_time_format_and_width_applied():
     wall = datetime(2026, 1, 1, 12, 0, 1, 200000)
     sampler.tick(now_monotonic=0.0, now_wall=wall)
     lines = out.getvalue().splitlines()
-    assert lines[0] == "time,      a"
-    assert lines[1] == "12:00:01,  1"
+    assert lines[0] == "time,       a"
+    assert lines[1] == "12:00:01,   1"
 
 
 def test_default_time_keeps_millisecond_format():
@@ -74,7 +74,7 @@ def test_default_time_keeps_millisecond_format():
     sampler = Sampler(columns, out=out)
     wall = datetime(2026, 1, 1, 12, 0, 1, 200000)
     sampler.tick(now_monotonic=0.0, now_wall=wall)
-    assert out.getvalue().splitlines()[1] == "12:00:01.200,1"
+    assert out.getvalue().splitlines()[1] == "12:00:01.200, 1"
 
 
 def test_width_does_not_truncate_longer_values():
@@ -83,7 +83,33 @@ def test_width_does_not_truncate_longer_values():
     sampler = Sampler(columns, out=out)
     wall = datetime(2026, 1, 1, 0, 0, 0)
     sampler.tick(0.0, wall)
-    assert out.getvalue().splitlines()[1] == "00:00:00.000,123456789"
+    assert out.getvalue().splitlines()[1] == "00:00:00.000, 123456789"
+
+
+def test_overflowing_value_still_gets_a_space_after_the_comma():
+    out = io.StringIO()
+    columns = [
+        FakeColumn("cpu", "123456789", width=4),
+        FakeColumn("x", "1"),
+    ]
+    sampler = Sampler(columns, out=out)
+    sampler.tick(0.0, datetime(2026, 1, 1))
+    assert out.getvalue().splitlines()[1] == "00:00:00.000, 123456789, 1"
+
+
+def test_column_widens_to_fit_long_header():
+    # cpu_nav2 (8 chars) in a width-6 column: without widening the header
+    # overflows and its later cells drift right of the data rows.
+    out = io.StringIO()
+    columns = [
+        FakeColumn("cpu_nav2", "100.0%", width=6),
+        FakeColumn("hz", "20.00", width=6),
+    ]
+    sampler = Sampler(columns, out=out)
+    sampler.tick(0.0, datetime(2026, 1, 1))
+    lines = out.getvalue().splitlines()
+    assert lines[0] == "time, cpu_nav2, hz    "
+    assert lines[1] == "00:00:00.000, 100.0%,   20.00 "
 
 
 def test_header_reprinted_when_column_added():
@@ -97,11 +123,11 @@ def test_header_reprinted_when_column_added():
     sampler.tick(2.0, wall)
     lines = out.getvalue().splitlines()
     assert lines == [
-        "time,a",
-        "00:00:00.000,1",
-        "time,a,b",
-        "00:00:00.000,1,2",
-        "00:00:00.000,1,2",
+        "time, a",
+        "00:00:00.000, 1",
+        "time, a, b",
+        "00:00:00.000, 1, 2",
+        "00:00:00.000, 1, 2",
     ]
 
 
@@ -110,7 +136,7 @@ def test_value_with_comma_is_quoted():
     columns = [FakeColumn("note", "a,b"), FakeColumn("x", "1")]
     sampler = Sampler(columns, out=out)
     sampler.tick(0.0, datetime(2026, 1, 1))
-    assert out.getvalue().splitlines()[1] == '00:00:00.000,"a,b",1'
+    assert out.getvalue().splitlines()[1] == '00:00:00.000, "a,b", 1'
 
 
 def test_value_with_quote_is_doubled_and_quoted():
@@ -118,7 +144,7 @@ def test_value_with_quote_is_doubled_and_quoted():
     columns = [FakeColumn("note", 'say "hi"')]
     sampler = Sampler(columns, out=out)
     sampler.tick(0.0, datetime(2026, 1, 1))
-    assert out.getvalue().splitlines()[1] == '00:00:00.000,"say ""hi"""'
+    assert out.getvalue().splitlines()[1] == '00:00:00.000, "say ""hi"""'
 
 
 def test_value_with_newline_stays_one_cell():
@@ -134,4 +160,4 @@ def test_header_name_with_comma_is_quoted():
     columns = [FakeColumn("a,b", "1")]
     sampler = Sampler(columns, out=out)
     sampler.tick(0.0, datetime(2026, 1, 1))
-    assert out.getvalue().splitlines()[0] == 'time,"a,b"'
+    assert out.getvalue().splitlines()[0] == 'time, "a,b"'

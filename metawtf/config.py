@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""metawtf.config: load and validate the metawtf.yaml column configuration.
+"""metawtf.config: load and validate the metawtf.conf column configuration.
 
 Author: Pito Salas and Claude Code
 Open Source Under MIT license
@@ -7,22 +7,33 @@ Open Source Under MIT license
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 DEFAULT_SAMPLE_HZ = 5.0
 DEFAULT_HZ_WINDOW = 2.0
-VALID_METRICS = {"echo", "hz"}
-TOP_LEVEL_KEYS = {"sample_hz", "columns", "time"}
+# Minimum cell widths applied when a column omits `width`; values are sized for
+# the metric's format (echo/hz print %.2f, proc_cpu/sys_cpu %.1f%%). Time keeps
+# no default: the stamp's natural width varies with the chosen format.
+DEFAULT_ECHO_WIDTH = 8
+DEFAULT_HZ_WIDTH = 6
+DEFAULT_PROC_CPU_WIDTH = 6
+DEFAULT_SYS_CPU_WIDTH = 6
+DIRECTIVES = {"sample", "time", "echo", "hz", "proc_cpu", "sys_cpu"}
+COLUMN_METRICS = {"echo", "hz", "proc_cpu", "sys_cpu"}
 TIME_KEYS = {"format", "width"}
 ECHO_KEYS = {
-    "name", "metric", "topic", "type", "field", "stale_after", "width",
+    "name", "topic", "type", "field", "stale_after", "width",
     "json", "subfields",
 }
-ECHO_REQUIRED_KEYS = {"metric", "topic", "field"}
-HZ_KEYS = {"metric", "topic", "match", "window", "name", "width"}
+ECHO_REQUIRED_KEYS = {"topic", "field"}
+HZ_KEYS = {"topic", "match", "window", "name", "width"}
+PROC_CPU_KEYS = {"name", "process", "width"}
+SYS_CPU_KEYS = {"name", "mode", "width"}
+SYS_CPU_MODES = {"busy", "idle"}
 
 
 class ConfigError(Exception):
-    """Raised when metawtf.yaml fails validation."""
+    """Raised when metawtf.conf fails validation."""
 
 
 @dataclass
@@ -48,6 +59,20 @@ class HzColumn:
 
 
 @dataclass
+class ProcCpuColumn:
+    name: str
+    process: re.Pattern
+    width: int | None = None
+
+
+@dataclass
+class SysCpuColumn:
+    name: str
+    mode: str
+    width: int | None = None
+
+
+@dataclass
 class TimeColumn:
     format: str | None = None
     width: int | None = None
@@ -56,7 +81,7 @@ class TimeColumn:
 @dataclass
 class Config:
     sample_hz: float
-    columns: list[EchoColumn | HzColumn]
+    columns: list[EchoColumn | HzColumn | ProcCpuColumn | SysCpuColumn]
     time: TimeColumn = field(default_factory=TimeColumn)
 
 
@@ -64,101 +89,158 @@ def sanitize_topic(topic: str) -> str:
     return topic.lstrip("/").replace("/", "_")
 
 
-def parse_config(data: dict) -> Config:
-    if not isinstance(data, dict):
-        raise ConfigError("top-level config must be a mapping")
-    unknown_keys = set(data) - TOP_LEVEL_KEYS
-    if unknown_keys:
-        raise ConfigError(f"unknown top-level key(s): {sorted(unknown_keys)}")
-    sample_hz = parse_sample_hz(data.get("sample_hz", DEFAULT_SAMPLE_HZ))
-    raw_columns = data.get("columns")
-    if not isinstance(raw_columns, list) or not raw_columns:
-        raise ConfigError("'columns' must be a non-empty list")
+def parse_config(text: str) -> Config:
+    sample_hz = DEFAULT_SAMPLE_HZ
+    time_column = TimeColumn()
+    columns = []
+    seen_singletons = set()
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            directive, positional, options = parse_line(line)
+            if directive in COLUMN_METRICS:
+                columns.append(parse_column(directive, positional, options))
+            elif directive == "sample":
+                sample_hz = parse_sample(positional, options, seen_singletons)
+            else:
+                time_column = parse_time(positional, options, seen_singletons)
+        except ConfigError as error:
+            raise ConfigError(f"line {line_no}: {error}") from error
+    if not columns:
+        raise ConfigError("no column directives (echo/hz/proc_cpu/sys_cpu)")
+    validate_windows(columns, sample_hz)
+    return Config(sample_hz=sample_hz, columns=columns, time=time_column)
+
+
+def validate_windows(columns: list, sample_hz: float) -> None:
+    # The sample directive may appear after hz lines, so the window-vs-period
+    # rule is checked after the whole file is parsed.
     sample_period = 1.0 / sample_hz
-    columns = [parse_column(entry, sample_period) for entry in raw_columns]
-    time = parse_time(data.get("time"))
-    return Config(sample_hz=sample_hz, columns=columns, time=time)
+    for column in columns:
+        if isinstance(column, HzColumn) and column.window < sample_period:
+            raise ConfigError(
+                f"'window' {column.window:g} must be >= sample period"
+                f" {sample_period:g}"
+            )
 
 
-def parse_time(data) -> TimeColumn:
-    if data is None:
-        return TimeColumn()
-    if not isinstance(data, dict):
-        raise ConfigError(f"'time' must be a mapping, got {data!r}")
-    unknown_keys = set(data) - TIME_KEYS
-    if unknown_keys:
-        raise ConfigError(f"unknown key(s) in time: {sorted(unknown_keys)}")
+def parse_line(line: str) -> tuple[str, str | None, dict]:
+    tokens = line.split()
+    directive, args = tokens[0], tokens[1:]
+    if directive not in DIRECTIVES:
+        raise ConfigError(
+            f"unknown directive {directive!r};"
+            f" expected one of {sorted(DIRECTIVES)}"
+        )
+    positional = None
+    options = {}
+    for token in args:
+        if "=" not in token:
+            if positional is not None:
+                raise ConfigError(
+                    f"at most one positional value, got {token!r} after"
+                    f" {positional!r}"
+                )
+            positional = token
+            continue
+        key, _, value = token.partition("=")
+        if not key or not value:
+            raise ConfigError(f"malformed token {token!r}; expected key=value")
+        if key in options:
+            raise ConfigError(f"repeated key {key!r}")
+        options[key] = value
+    return directive, positional, options
+
+
+def parse_sample(positional, options: dict, seen: set) -> float:
+    reject_singleton_repeat("sample", seen)
+    if options:
+        raise ConfigError(f"'sample' takes no key=value options: {sorted(options)}")
+    if positional is None:
+        raise ConfigError("'sample' requires a value, e.g. 'sample 5'")
+    return parse_float(positional, "sample_hz", must_be_positive=True)
+
+
+def parse_time(positional, options: dict, seen: set) -> TimeColumn:
+    reject_singleton_repeat("time", seen)
+    if positional is not None:
+        raise ConfigError(f"'time' takes no positional value, got {positional!r}")
+    reject_unknown_keys(options, TIME_KEYS, "time")
     return TimeColumn(
-        format=optional_str(data, "format"),
-        width=parse_width(data.get("width")),
+        format=options.get("format"),
+        width=parse_width(options.get("width")),
     )
 
 
-def parse_sample_hz(value) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigError(f"sample_hz must be a number, got {value!r}")
-    if value <= 0:
-        raise ConfigError(f"sample_hz must be > 0, got {value!r}")
-    return float(value)
+def reject_singleton_repeat(directive: str, seen: set) -> None:
+    if directive in seen:
+        raise ConfigError(f"repeated '{directive}' directive")
+    seen.add(directive)
 
 
-def parse_column(entry: dict, sample_period: float) -> EchoColumn | HzColumn:
-    if not isinstance(entry, dict):
-        raise ConfigError(f"column entry must be a mapping, got {entry!r}")
-    metric = entry.get("metric")
-    if metric not in VALID_METRICS:
-        raise ConfigError(
-            f"unknown metric {metric!r}; expected one of {sorted(VALID_METRICS)}"
-        )
-    if metric == "echo":
-        return parse_echo_column(entry)
-    return parse_hz_column(entry, sample_period)
+def parse_column(
+    directive: str, positional: str | None, options: dict
+) -> EchoColumn | HzColumn | ProcCpuColumn | SysCpuColumn:
+    if positional is not None:
+        if directive not in ("echo", "hz"):
+            raise ConfigError(
+                f"'{directive}' takes no positional value, got {positional!r}"
+            )
+        if "topic" in options:
+            raise ConfigError(
+                f"topic given twice: positional {positional!r} and 'topic='"
+            )
+        options = {**options, "topic": positional}
+    if directive == "echo":
+        return parse_echo_column(options)
+    if directive == "proc_cpu":
+        return parse_proc_cpu_column(options)
+    if directive == "sys_cpu":
+        return parse_sys_cpu_column(options)
+    return parse_hz_column(options)
 
 
-def parse_echo_column(entry: dict) -> EchoColumn:
-    unknown_keys = set(entry) - ECHO_KEYS
-    if unknown_keys:
-        raise ConfigError(f"unknown key(s) in echo column: {sorted(unknown_keys)}")
-    missing_keys = ECHO_REQUIRED_KEYS - set(entry)
+def parse_echo_column(options: dict) -> EchoColumn:
+    reject_unknown_keys(options, ECHO_KEYS, "echo")
+    missing_keys = ECHO_REQUIRED_KEYS - set(options)
     if missing_keys:
         raise ConfigError(f"echo column missing key(s): {sorted(missing_keys)}")
-    topic = require_str(entry, "topic")
-    field = require_str(entry, "field")
-    column_type = optional_str(entry, "type")
-    stale_after = parse_stale_after(entry.get("stale_after"))
-    is_json = parse_bool(entry.get("json", False), "json")
-    subfields = parse_subfields(entry.get("subfields"))
-    name = resolve_echo_name(entry, topic, is_json, subfields)
+    topic = options["topic"]
+    field = options["field"]
+    column_type = options.get("type")
+    stale_after = parse_float_option(options, "stale_after")
+    is_json = parse_bool(options.get("json", "false"), "json")
+    subfields = parse_subfields(options.get("subfields"))
+    name = resolve_echo_name(options, topic, is_json, subfields)
     return EchoColumn(
         name=name,
         topic=topic,
         field=field,
         type=column_type,
         stale_after=stale_after,
-        width=parse_width(entry.get("width")),
+        width=parse_width(options.get("width"), DEFAULT_ECHO_WIDTH),
         is_json=is_json,
         subfields=subfields,
-        subfield_names=resolve_subfield_names(entry, name, subfields),
+        subfield_names=resolve_subfield_names(options, name, subfields),
     )
 
 
-def resolve_echo_name(entry, topic, is_json, subfields) -> str:
+def resolve_echo_name(options, topic, is_json, subfields) -> str:
     if subfields is not None and not is_json:
-        raise ConfigError("'subfields' requires 'json: true'")
-    if subfields is not None and len(subfields) > 1 and "name" in entry:
+        raise ConfigError("'subfields' requires 'json=true'")
+    if subfields is not None and len(subfields) > 1 and "name" in options:
         raise ConfigError("'name' is not allowed with more than one subfield")
-    name = entry.get("name") or sanitize_topic(topic)
-    if not isinstance(name, str):
-        raise ConfigError(f"'name' must be a string, got {name!r}")
-    return name
+    return options.get("name") or sanitize_topic(topic)
 
 
-def resolve_subfield_names(entry, name, subfields) -> list[str] | None:
+def resolve_subfield_names(options, name, subfields) -> list[str] | None:
     if subfields is None:
         return None
     # An explicit name on a single-subfield selection is the column header
     # itself; otherwise headers are <base>_<key with dots as underscores>.
-    if len(subfields) == 1 and "name" in entry:
+    if len(subfields) == 1 and "name" in options:
         return [name]
     return [subfield_name(name, key) for key in subfields]
 
@@ -167,105 +249,108 @@ def subfield_name(prefix: str, key: str) -> str:
     return f"{prefix}_{key.replace('.', '_')}"
 
 
-def parse_bool(value, key: str) -> bool:
-    if not isinstance(value, bool):
-        raise ConfigError(f"'{key}' must be true or false, got {value!r}")
-    return value
-
-
-def parse_subfields(value) -> list[str] | None:
-    if value is None:
-        return None
-    if not isinstance(value, list) or not value:
-        raise ConfigError(f"'subfields' must be a non-empty list, got {value!r}")
-    for item in value:
-        if not isinstance(item, str) or not item:
-            raise ConfigError(
-                f"each subfield must be a non-empty string, got {item!r}"
-            )
-    return value
-
-
-def parse_hz_column(entry: dict, sample_period: float) -> HzColumn:
-    unknown_keys = set(entry) - HZ_KEYS
-    if unknown_keys:
-        raise ConfigError(f"unknown key(s) in hz column: {sorted(unknown_keys)}")
-    has_topic = "topic" in entry
-    has_match = "match" in entry
+def parse_hz_column(options: dict) -> HzColumn:
+    reject_unknown_keys(options, HZ_KEYS, "hz")
+    has_topic = "topic" in options
+    has_match = "match" in options
     if has_topic == has_match:
         raise ConfigError("hz column requires exactly one of 'topic' or 'match'")
-    window = parse_window(entry.get("window", DEFAULT_HZ_WINDOW), sample_period)
-    width = parse_width(entry.get("width"))
+    window = parse_float(options.get("window", str(DEFAULT_HZ_WINDOW)), "window")
+    width = parse_width(options.get("width"), DEFAULT_HZ_WIDTH)
     if has_match:
-        if "name" in entry:
+        if "name" in options:
             raise ConfigError("'name' is not allowed on an hz column with 'match'")
-        pattern = compile_regex(require_str(entry, "match"))
+        pattern = compile_regex(options["match"], "match")
         return HzColumn(window=window, match=pattern, width=width)
-    topic = require_str(entry, "topic")
-    name = entry.get("name") or sanitize_topic(topic)
-    if not isinstance(name, str):
-        raise ConfigError(f"'name' must be a string, got {name!r}")
-    return HzColumn(window=window, topic=topic, name=name, width=width)
+    name = options.get("name") or sanitize_topic(options["topic"])
+    return HzColumn(window=window, topic=options["topic"], name=name, width=width)
 
 
-def parse_window(value, sample_period: float) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigError(f"window must be a number, got {value!r}")
-    if value < sample_period:
+def parse_proc_cpu_column(options: dict) -> ProcCpuColumn:
+    reject_unknown_keys(options, PROC_CPU_KEYS, "proc_cpu")
+    name = require_key(options, "name")
+    pattern = compile_regex(require_key(options, "process"), "process")
+    width = parse_width(options.get("width"), DEFAULT_PROC_CPU_WIDTH)
+    return ProcCpuColumn(name=name, process=pattern, width=width)
+
+
+def parse_sys_cpu_column(options: dict) -> SysCpuColumn:
+    reject_unknown_keys(options, SYS_CPU_KEYS, "sys_cpu")
+    name = require_key(options, "name")
+    mode = require_key(options, "mode")
+    if mode not in SYS_CPU_MODES:
         raise ConfigError(
-            f"window {value!r} must be >= sample period {sample_period:g}"
+            f"'mode' must be one of {sorted(SYS_CPU_MODES)}, got {mode!r}"
         )
-    return float(value)
+    width = parse_width(options.get("width"), DEFAULT_SYS_CPU_WIDTH)
+    return SysCpuColumn(name=name, mode=mode, width=width)
 
 
-def parse_width(value) -> int | None:
+def reject_unknown_keys(options: dict, valid_keys: set, where: str) -> None:
+    unknown_keys = set(options) - valid_keys
+    if unknown_keys:
+        raise ConfigError(f"unknown key(s) in {where}: {sorted(unknown_keys)}")
+
+
+def require_key(options: dict, key: str) -> str:
+    if key not in options:
+        raise ConfigError(f"missing required key {key!r}")
+    return options[key]
+
+
+def parse_float_option(options: dict, key: str) -> float | None:
+    if key not in options:
+        return None
+    return parse_float(options[key], key, must_be_positive=True)
+
+
+def parse_float(value: str, key: str, must_be_positive: bool = False) -> float:
+    try:
+        number = float(value)
+    except ValueError:
+        raise ConfigError(f"'{key}' must be a number, got {value!r}") from None
+    if must_be_positive and number <= 0:
+        raise ConfigError(f"'{key}' must be > 0, got {value!r}")
+    return number
+
+
+def parse_width(value: str | None, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    try:
+        width = int(value)
+    except ValueError:
+        raise ConfigError(f"'width' must be an integer, got {value!r}") from None
+    if width <= 0:
+        raise ConfigError(f"'width' must be > 0, got {value!r}")
+    return width
+
+
+def parse_bool(value: str, key: str) -> bool:
+    if value not in ("true", "false"):
+        raise ConfigError(f"'{key}' must be true or false, got {value!r}")
+    return value == "true"
+
+
+def parse_subfields(value: str | None) -> list[str] | None:
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ConfigError(f"width must be an integer, got {value!r}")
-    if value <= 0:
-        raise ConfigError(f"width must be > 0, got {value!r}")
-    return value
+    subfields = value.split(",")
+    if any(not item for item in subfields):
+        raise ConfigError(f"'subfields' must be non-empty keys, got {value!r}")
+    return subfields
 
 
-def compile_regex(pattern: str) -> re.Pattern:
+def compile_regex(pattern: str, key: str) -> re.Pattern:
     try:
         return re.compile(pattern)
     except re.error as err:
-        raise ConfigError(f"invalid regex {pattern!r}: {err}") from err
-
-
-def require_str(entry: dict, key: str) -> str:
-    value = entry.get(key)
-    if not isinstance(value, str) or not value:
-        raise ConfigError(f"'{key}' must be a non-empty string, got {value!r}")
-    return value
-
-
-def optional_str(entry: dict, key: str) -> str | None:
-    if key not in entry:
-        return None
-    return require_str(entry, key)
-
-
-def parse_stale_after(value) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigError(f"stale_after must be a number, got {value!r}")
-    if value <= 0:
-        raise ConfigError(f"stale_after must be > 0, got {value!r}")
-    return float(value)
+        raise ConfigError(f"invalid regex in '{key}' {pattern!r}: {err}") from err
 
 
 def load_config(path) -> Config:
-    import yaml
-
     try:
-        with open(path) as config_file:
-            data = yaml.safe_load(config_file)
+        text = Path(path).read_text()
     except OSError as error:
         raise ConfigError(f"cannot read config {path}: {error}") from error
-    except yaml.YAMLError as error:
-        raise ConfigError(f"invalid YAML in {path}: {error}") from error
-    return parse_config(data or {})
+    return parse_config(text)

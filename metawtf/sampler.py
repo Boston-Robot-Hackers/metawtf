@@ -40,29 +40,44 @@ class Sampler:
         print(self.format_row(now_monotonic, now_wall), file=self.out)
 
     def format_header(self) -> str:
-        cells = [("time", self.time.width)]
-        cells += [(column.name, column.width) for column in self.columns]
+        cells = [("time", effective_width("time", self.time.width))]
+        cells += [
+            (column.name, effective_width(column.name, column.width))
+            for column in self.columns
+        ]
         return join_cells(cells)
 
     def format_row(self, now_monotonic: float, now_wall: datetime) -> str:
-        cells = [(format_timestamp(now_wall, self.time.format), self.time.width)]
+        stamp = format_timestamp(now_wall, self.time.format)
+        cells = [(stamp, effective_width("time", self.time.width))]
         for column in self.columns:
             value = column.sample(now_monotonic)
-            cells.append(("" if value is None else value, column.width))
+            width = effective_width(column.name, column.width)
+            cells.append(("" if value is None else value, width))
         return join_cells(cells)
+
+
+def effective_width(name: str, width: int | None) -> int | None:
+    # A header longer than its column's width overflows and pushes that row's
+    # later cells right of the data rows; widen the column to fit the header
+    # so header and rows always line up. None keeps the no-padding semantics.
+    if width is None:
+        return None
+    return max(width, len(name))
 
 
 def join_cells(cells: list[tuple[str, int | None]]) -> str:
     # Cells are RFC-4180 quoted first; then the comma binds to the value it
     # follows and padding comes after it, so columns line up in the terminal
-    # while the row still imports as CSV.
+    # while the row still imports as CSV. A single space always follows the
+    # comma, even when a value overflows its column width.
     parts = []
     last_index = len(cells) - 1
     for index, (text, width) in enumerate(cells):
         text = quote_cell(text)
         if index < last_index:
-            text = f"{text},"
-            width = None if width is None else width + 1
+            text = f"{text}, "
+            width = None if width is None else width + 2
         parts.append(pad(text, width))
     return "".join(parts)
 

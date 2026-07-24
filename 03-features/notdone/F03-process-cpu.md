@@ -3,20 +3,17 @@
 **Priority**: Medium
 **Done:** no
 **Tasks File Created:** yes
-**Tests Written:** no
-**Test Passing:** no
+**Tests Written:** yes
+**Test Passing:** yes
 
 **Description**: Add `proc_cpu` columns to the sampled table, reporting CPU% of
 a process selected by regex against its command line. Sampled per tick from
 `/proc/<pid>/stat` — standard library only, no psutil dependency. Motivating
 case: "percent CPU of the `controller_server` process, on the same rows as
-topic data."
+topic data." (System-wide busy/idle CPU landed alongside as `sys_cpu`.)
 
-```yaml
-columns:
-  - name: cpu_nav2                    # required for proc_cpu
-    metric: proc_cpu
-    process: "controller_server"      # regex matched against /proc/*/cmdline
+```
+proc_cpu name=cpu_nav2 process=controller_server
 ```
 
 Correctness rules:
@@ -49,7 +46,7 @@ a test process.
 core) and goes empty after the kill.
 
 ## Non-Goals (this feature)
-- Memory, IO, network, per-thread metrics; system-wide CPU.
+- Memory, IO, network, per-thread metrics.
 - Normalizing by core count (raw psutil/top-style percent only).
 - Non-Linux platforms.
 

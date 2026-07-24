@@ -67,11 +67,11 @@ def test_watch_keys_h_shows_help_without_quitting():
 
 
 def test_parse_cli_default_is_cwd_config():
-    assert parse_cli([]) == Path.cwd() / "metawtf.yaml"
+    assert parse_cli([]) == Path.cwd() / "metawtf.conf"
 
 
 def test_parse_cli_f_overrides_config_path():
-    assert parse_cli(["-f", "other.yaml"]) == Path("other.yaml")
+    assert parse_cli(["-f", "other.conf"]) == Path("other.conf")
 
 
 def test_parse_cli_h_prints_help_and_exits(capsys):
@@ -100,7 +100,7 @@ def ros_context():
 
 
 def test_config_path_is_current_directory():
-    assert default_config_path() == Path.cwd() / "metawtf.yaml"
+    assert default_config_path() == Path.cwd() / "metawtf.conf"
 
 
 def test_node_constructs_and_destroys_with_no_publishers():
@@ -124,7 +124,7 @@ def test_on_message_updates_echo_state():
 
 
 def test_main_exits_cleanly_on_missing_config(tmp_path, monkeypatch):
-    missing = tmp_path / "nope.yaml"
+    missing = tmp_path / "nope.conf"
     monkeypatch.setattr(sys, "argv", ["metawtf", "-f", str(missing)])
     with pytest.raises(SystemExit) as excinfo:
         main()

@@ -78,6 +78,24 @@ then rows with the numeric values; a malformed message shows `?` in those cells.
   the JSON case.
 - Rewriting hz/proc_cpu to support `subfields`.
 
+## Follow-ups
+- **All-fields expansion for plain messages** (deferred from Non-Goals above):
+  the `JsonKeysExpander` grows one column per key of the first parsed JSON
+  message; the same trick could grow one column per scalar field of any
+  message type, driven by the type's slot/field definitions instead of parsed
+  JSON. Sketch:
+  ```yaml
+  - metric: echo
+    topic: /cmd_vel
+    all_fields: true   # -> columns cmd_vel_linear_x ... cmd_vel_angular_z
+  ```
+  (Alternative spellings: `field: "*"`, or make `field` optional and treat its
+  absence as "all".) Nested submessages expand recursively as dotted paths
+  (`linear.x`); non-scalar slots (arrays, nested blobs) render `?` or are
+  skipped, same rules as the JSON case. Column naming follows the F04 pattern
+  (sanitized topic + dots-as-underscores). No task file yet — promote to F05
+  if wanted.
+
 ## Process Gate
 After creating this feature file and the corresponding task file, **stop and
 present the plan to the user**. Do not write any code until the user approves.

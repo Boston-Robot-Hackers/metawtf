@@ -9,7 +9,7 @@ import re
 from types import SimpleNamespace
 
 from metawtf.column_manager import ColumnManager
-from metawtf.config import Config, EchoColumn, HzColumn
+from metawtf.config import Config, EchoColumn, HzColumn, ProcCpuColumn, SysCpuColumn
 
 
 class FakeLogger:
@@ -176,3 +176,31 @@ def test_scan_queries_the_graph_once_for_many_pending_columns():
     manager = ColumnManager(node, config)
     manager.scan()
     assert node.graph_queries == 1
+
+
+def test_proc_cpu_column_adds_state_without_subscription():
+    node = FakeNode([])
+    config = Config(
+        sample_hz=5.0,
+        columns=[
+            ProcCpuColumn(name="cpu_loop", process=re.compile("busyloop")),
+        ],
+    )
+    manager = ColumnManager(node, config)
+    manager.scan()
+    assert [state.name for state in manager.states] == ["cpu_loop"]
+    assert node.subscriptions_made == []
+
+
+def test_sys_cpu_column_adds_state_without_subscription():
+    node = FakeNode([])
+    config = Config(
+        sample_hz=5.0,
+        columns=[SysCpuColumn(name="cpu_idle", mode="idle")],
+    )
+    manager = ColumnManager(node, config)
+    manager.scan()
+    assert [state.name for state in manager.states] == ["cpu_idle"]
+    assert manager.states[0].mode == "idle"
+    assert node.subscriptions_made == []
+    assert manager.subscriptions == []

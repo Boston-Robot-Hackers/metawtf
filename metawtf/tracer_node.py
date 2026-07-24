@@ -21,15 +21,15 @@ from metawtf.column_manager import ColumnManager
 from metawtf.config import Config, ConfigError, load_config
 from metawtf.sampler import Sampler
 
-CONFIG_FILENAME = "metawtf.yaml"
+CONFIG_FILENAME = "metawtf.conf"
 RESCAN_PERIOD_SEC = 1.0
 
 HELP_TEXT = """\
 metawtf — sample ROS2 topic values into CSV columns
 
-usage: metawtf [-h] [-f config.yaml]
+usage: metawtf [-h] [-f config.conf]
   -h   show this help and exit
-  -f   read config from the given yaml (default: ./metawtf.yaml)
+  -f   read config from the given file (default: ./metawtf.conf)
 
 keys while running:
   space  pause / resume output

@@ -1,16 +1,33 @@
 # Current Status — Session Handoff
 
-**Last updated:** 2026-07-23
+**Last updated:** 2026-07-24
 
 ## State
 Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). Full suite:
-**121 passed** via `python3 -m pytest test/`.
+**191 passed** via `python3 -m pytest test/`.
 
-Code review 2026-07-23: six fixes landed as chores (CSV cell quoting, rate
-counter bounded while paused, `.claude/worktrees/` untracked, clean startup
-errors, `Sampler` stream default, one graph query per scan); seven follow-ups
-open in `04-tasks/chores.md`. Literate docs for the five changed modules
-regenerated; committed and pushed in the 2026-07-23 checkpoint.
+**F05 (conf-only config): DONE and closed** — YAML is gone. `config.py`
+parses line-oriented `metawtf.conf` (directive + positional + `key=value`,
+string coercion in the validators, line-numbered errors); default config is
+`./metawtf.conf`; pyyaml dropped from `package.xml`; `~/ros2_ws/metawtf.conf`
+is the live config (yaml deleted); repo sample is `metawtf/metawtf.conf` with
+a formal grammar header; README/spec rewritten; F05/TF05 moved to `done/`.
+
+**F06 (sys_cpu): DONE and closed** — system-wide busy/idle CPU from
+`/proc/stat` (`mode=busy|idle`, `%.1f%%`); feature/task files created
+retroactively and filed in `done/`. Also landed: proc_cpu prints with `%`,
+per-metric default widths (echo 8, others 6), columns auto-widen to fit
+headers, every comma followed by a space in output.
+
+**Literate docs fully regenerated** per the new `.claude/literate.md` (copied
+from dome_nav — adds algorithm/theory depth and architecture overviews):
+all 21 modules covered, renumbered in dependency order, plus a new
+`01-literate/00-overview.md` (theory of operation).
+
+**F03 (TF03): code done, T06 open** — T01–T05 marked done (implemented and
+tested); the live busyloop demo + colcon check remain. F03 file amended:
+system-wide CPU removed from non-goals (became F06), example in conf syntax,
+`%.1f%%` format.
 
 **F01 (TF01): DONE and closed** — echo columns, moved to `done/`.
 
@@ -18,20 +35,7 @@ regenerated; committed and pushed in the 2026-07-23 checkpoint.
 Live tf demo verified by the user 2026-07-22; moved to `done/`.
 
 **F04 (TF04): DONE and closed** — JSON-string fields expanded into subfield
-columns; live demo (scalar columns + `?` on malformed) verified by the user
-2026-07-22; moved to `done/`. Implementation:
-- `metawtf/json_select.py` — dotted-key scalar selection from parsed JSON (T02)
-- `metawtf/value_column.py` — shared `ValueColumnState` base + `INVALID`
-  sentinel; `EchoColumnState` and `JsonEchoColumnState` both derive from it
-- `metawtf/json_column.py` — per-key column state; any failure → `?` (T03)
-- `metawtf/config.py` — `json`/`subfields` schema, `subfield_names` computed
-  at parse; explicit `name` allowed only with a single subfield (T01)
-- `metawtf/column_manager.py` — one subscription fans out to several column
-  states; `JsonKeysExpander` grows columns from the first parsed message when
-  `subfields` is omitted (T04, T05)
-
-Next up: **F03 process CPU** is the only open feature (TF03 in
-`04-tasks/notdone/`).
+columns; live demo verified by the user 2026-07-22; moved to `done/`.
 
 ## Chores landed this session (`04-tasks/chores.md`)
 - Floats print with 2 decimals everywhere (echo `.2f`, hz `.2f`).
