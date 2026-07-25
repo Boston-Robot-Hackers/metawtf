@@ -1,8 +1,8 @@
 # metawtf
 
-A minimal ROS2 CLI that samples selected topic fields into a CSV stream on
-stdout — one row per tick — so you can eyeball live values and redirect the
-same output to a file for spreadsheets and graphing.
+A minimal ROS2 CLI that samples selected topic fields into a row-per-tick
+stream on stdout. On a terminal you get an aligned, live view with a pinned
+header; piped or redirected you get clean CSV for spreadsheets and graphing.
 
 ## How is this different from `ros2 bag`?
 
@@ -43,7 +43,7 @@ needed. It stays available in any shell where the workspace is sourced.
 ## Usage
 
 ```bash
-metawtf                  # prints CSV rows to the terminal
+metawtf                  # aligned live view on a terminal, CSV when piped
 metawtf > run.csv        # capture for a spreadsheet
 metawtf -f other.conf    # use a config other than ./metawtf.conf
 metawtf -h               # show help and exit
@@ -52,6 +52,10 @@ metawtf -h               # show help and exit
 On start it reads `metawtf.conf` from the **current working directory** (or the
 file given with `-f`). Edit it and re-run — no rebuild needed.
 (`metawtf/metawtf.conf` in the repo is a sample to copy.)
+
+The output format auto-detects: a terminal gets the `human` format (aligned
+columns, pinned header), a pipe or redirect gets plain `csv`. Override with a
+`format human|csv` directive in the config.
 
 **Keys while running** (no Enter needed): `space` pauses/resumes row output,
 `h` shows help, `q` quits (`Ctrl-C` also works). It shuts down cleanly with no
@@ -82,6 +86,7 @@ sys_cpu name=cpu_idle mode=idle
 |-----------|----------|-----------------------------------------------------|
 | `sample`  | no       | rows per second; positional value must be > 0 (default `5.0`) |
 | `time`    | no       | configures the leading timestamp column; see below  |
+| `format`  | no       | `human` or `csv` (positional); default auto-detects from stdout — `human` on a tty, `csv` when piped |
 | column directives | yes, at least one | `echo`, `hz`, `proc_cpu`, `sys_cpu`; one per line |
 
 #### `time` directive (the leading timestamp column)
@@ -147,30 +152,48 @@ Notes:
   them apart.
 - `field` is an attribute path only; indexing into message arrays is not
   supported in this version.
-- A `match` column set can grow at runtime; when a new topic is discovered a
-  fresh header line is printed before the next row (a documented CSV caveat).
+- A `match` column set can grow at runtime; when a new topic is discovered the
+  header is re-emitted before the next row (in csv output a fresh header line
+  is printed — a documented CSV caveat; in the pinned human view the header is
+  redrawn in place).
 
 ### Output
 
-Each tick prints the timestamp column plus one value per column. Missing, stale,
-or not-yet-published data produces an **empty cell** — never `0`, never a crash.
-Floats are formatted with **2 decimals**. `width` is a **minimum**: the comma
-sits right after each value followed by a single space, and shorter cells are
-space-padded after that, so columns line up in the terminal; a value longer
-than `width` is printed in full (never truncated), so it overflows and nudges
-that row's later columns out of alignment until the next row. Columns that
-omit `width` use the metric's default (`8` for echo, `6` for hz and proc_cpu);
-the time column is unpadded unless given an explicit `width`. Either way a
-column is widened as needed to fit its header name, so the header row always
-lines up with the data rows. The output still imports as CSV: any cell
-containing a comma, quote, or newline is quoted per RFC 4180 (inner quotes
-doubled), so string values always occupy a single cell.
+Each tick prints the timestamp column plus one value per column. Missing,
+stale, or not-yet-published data produces an **empty cell** — never `0`,
+never a crash. Floats are formatted with **2 decimals**.
+
+**Human format** (default on a terminal): the header is pinned to the top of
+the screen via an ANSI scroll region, so rows scroll beneath it and the
+header never moves. Cells are padded so columns line up: the comma sits right
+after each value followed by a single space. `width` is a **minimum** column
+width; a value longer than it is truncated with `…` so rows never drift out
+of alignment. Headers are never truncated — give the column a short `name=`
+if the header itself is wide. Columns that omit `width` use the metric's
+default (`8` for echo, `6` for hz and proc_cpu); the time column is unpadded
+unless given an explicit `width`. Either way a column is widened as needed to
+fit its header name. Quitting (`q` or Ctrl-C) restores the screen and leaves
+the shell prompt below the output.
 
 ```
 time, odom_x,   odom_z
 12:00:01.200, 1.21,     0.04
 12:00:01.400, 1.22,     0.05
 ```
+
+**CSV format** (default when piped or redirected): pure RFC 4180 — bare
+commas, no padding, full untruncated values; any cell containing a comma,
+quote, or newline is quoted (inner quotes doubled), so string values always
+occupy a single cell. No padding, no escape sequences, no pinned header.
+
+```
+time,odom_x,odom_z
+12:00:01.200,1.21,0.04
+12:00:01.400,1.22,0.05
+```
+
+Note: rows that scroll off the pinned region are not kept in the terminal's
+scrollback — redirect csv output to a file for a full record.
 
 ## Development
 

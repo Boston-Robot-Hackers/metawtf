@@ -41,7 +41,7 @@ def test_sample_is_none_when_tracker_has_no_value():
 def test_row_shows_busy_and_idle_columns():
     out = io.StringIO()
     columns = [make_column("busy", (25.0, 75.0)), make_column("idle", (25.0, 75.0))]
-    sampler = Sampler(columns, out=out)
+    sampler = Sampler(columns, out=out, human=True)
     sampler.tick(0.0, datetime(2026, 1, 1, 12, 0, 1, 200000))
     lines = out.getvalue().splitlines()
     assert lines[0] == "time, cpu_busy, cpu_idle"

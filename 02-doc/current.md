@@ -1,10 +1,23 @@
 # Current Status — Session Handoff
 
-**Last updated:** 2026-07-24
+**Last updated:** 2026-07-25
 
 ## State
 Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). Full suite:
-**191 passed** via `python3 -m pytest test/`.
+**217 passed** via `python3 -m pytest test/`.
+
+**F07 (output formats + pinned header): DONE and closed** — `format human|csv`
+directive (`Config.output_format`, None = auto-detect); `Sampler` takes
+keyword-only `human=` plus an `on_header` hook and renders either padded,
+`…`-truncated human rows or pure RFC-4180 csv; new `metawtf/terminal.py`
+`PinnedHeader` freezes the header via an ANSI scroll region (DECSTBM) with
+clean restore on quit; `tracer_node` resolves the mode (`format` wins, else
+`sys.stdout.isatty()`) and wires `pinned.show` as `on_header`. csv mode
+verified end-to-end against a live `ros2 topic pub`; the pty eyeball of the
+pinned header on a real terminal is left to the user. Docs: spec, README,
+`metawtf.conf` grammar, literate regen (01, 18, 20, new X02-terminal,
+00-overview bumped). Gotcha: xterm-style terminals do not add rows scrolled
+off a scroll region to scrollback — redirect csv for a full record.
 
 **F05 (conf-only config): DONE and closed** — YAML is gone. `config.py`
 parses line-oriented `metawtf.conf` (directive + positional + `key=value`,

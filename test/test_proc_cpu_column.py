@@ -38,7 +38,7 @@ def test_sample_is_none_when_tracker_has_no_value():
 
 def test_row_shows_cpu_value():
     out = io.StringIO()
-    sampler = Sampler([make_column(100.0)], out=out)
+    sampler = Sampler([make_column(100.0)], out=out, human=True)
     sampler.tick(0.0, datetime(2026, 1, 1, 12, 0, 1, 200000))
     lines = out.getvalue().splitlines()
     assert lines[0] == "time, cpu_loop"
@@ -47,13 +47,13 @@ def test_row_shows_cpu_value():
 
 def test_row_cell_is_empty_when_process_absent():
     out = io.StringIO()
-    sampler = Sampler([make_column(None)], out=out)
+    sampler = Sampler([make_column(None)], out=out, human=True)
     sampler.tick(0.0, datetime(2026, 1, 1, 12, 0, 1, 200000))
     assert out.getvalue().splitlines()[1] == "12:00:01.200, "
 
 
 def test_width_pads_cell_like_other_columns():
     out = io.StringIO()
-    sampler = Sampler([make_column(100.0, width=8)], out=out)
+    sampler = Sampler([make_column(100.0, width=8)], out=out, human=True)
     sampler.tick(0.0, datetime(2026, 1, 1))
     assert out.getvalue().splitlines()[1] == "00:00:00.000, 100.0%  "

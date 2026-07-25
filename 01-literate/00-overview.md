@@ -1,6 +1,6 @@
 ---
-version: "1.0"
-generated: "2026-07-24"
+version: "1.1"
+generated: "2026-07-25"
 ---
 
 # Overview: the theory of operation of metawtf
@@ -11,10 +11,13 @@ screen?"* A robotics developer typically juggles `ros2 topic echo` in one
 terminal, `ros2 topic hz` in another, and `top` in a third, and cannot see a
 velocity command, a TF rate, and a navigator's CPU% line up in time. metawtf
 merges them: a single process samples a configurable set of *columns* on a
-common timer and prints one CSV row per tick — timestamp plus one value per
-column — to stdout. The same stream is watched live and redirected to a file
-for spreadsheets and graphing, so the output contract is both
-"eyeball-friendly" (aligned columns) and "machine-friendly" (RFC-4180 CSV).
+common timer and prints one row per tick — timestamp plus one value per
+column — to stdout. Output comes in two formats chosen by where stdout
+points: on a terminal the `human` format aligns and pads columns, truncates
+over-wide values with `…`, and pins the header to the top of the screen via
+an ANSI scroll region; piped or redirected, the `csv` format emits plain
+RFC-4180 rows for spreadsheets and graphing. A `format` directive overrides
+the auto-detection.
 
 This document is the map. It explains the architecture as a whole — the
 abstractions, the data and control flow, and the design rules that recur in
@@ -32,9 +35,10 @@ flowchart LR
         NODE --> MGR[column_manager<br/>subscriptions + states]
         MGR --> ST[Column states<br/>echo · hz · json · cpu]
         SUB[/ROS subscriptions<br/>+ \/proc reads/] --> ST
-        ST --> SMP[sampler<br/>CSV formatting]
+        ST --> SMP[sampler<br/>human / csv formatting]
         NODE -->|sample_hz timer| SMP
-        SMP --> OUT[(stdout CSV)]
+        SMP --> OUT[(stdout)]
+        TERM[terminal.py<br/>pinned header] -.->|human + tty| OUT
     end
 ```
 
@@ -55,7 +59,9 @@ The lifecycle of a run:
    column set at runtime.
 4. **Tick.** A `sample_hz` timer asks the `Sampler` for a row (chapter 18).
    Each column state's `sample(now)` returns a string or `None`; the sampler
-   quotes, pads, and joins cells into a CSV line.
+   joins the cells in one of two modes — padded and truncated for humans,
+   bare RFC-4180 for csv. In human mode on a tty the header is pinned by a
+   scroll region (appendix X02) instead of reprinted.
 
 ## The two clocks and the O(1) rule
 
@@ -138,10 +144,10 @@ chapter:
 ## Testability as an architectural feature
 
 Every measurement seam is injectable: the `/proc` root, the clock, the
-jiffies reader, the graph snapshot. The consequence is structural — the 191
-tests run without ROS, without root, without real processes, and mostly
-without mocks, because the code was shaped around replaceable boundaries
-rather than patched around them in the tests.
+jiffies reader, the graph snapshot, the terminal size, the output stream. The
+consequence is structural — the 217 tests run without ROS, without root,
+without real processes, and mostly without mocks, because the code was shaped
+around replaceable boundaries rather than patched around them in the tests.
 
 ## Reading guide
 
@@ -155,7 +161,8 @@ before it:
 - **10–13** value columns: shared base, echo, hz, JSON subfields
 - **14–17** CPU measurement: trackers and their column states
 - **18–20** the output and orchestration: sampler, column manager, node
-- **X01** appendix: `json_select`, the dotted-key walker
+- **X01, X02** appendices: `json_select`, the dotted-key walker; `terminal`,
+  the ANSI pinned header
 
 ## Observations and possible improvements
 

@@ -21,6 +21,7 @@ from metawtf.tracer_node import (
     default_config_path,
     main,
     parse_cli,
+    resolve_human,
     watch_keys,
 )
 
@@ -130,3 +131,45 @@ def test_main_exits_cleanly_on_missing_config(tmp_path, monkeypatch):
         main()
     assert excinfo.value.code != 0
     assert "cannot read config" in str(excinfo.value)
+
+
+def test_resolve_human_honors_the_config_format():
+    assert resolve_human("human") is True
+    assert resolve_human("csv") is False
+
+
+def test_resolve_human_auto_detects_from_stdout(monkeypatch):
+    monkeypatch.setattr(sys, "stdout", SimpleNamespace(isatty=lambda: True))
+    assert resolve_human(None) is True
+    monkeypatch.setattr(sys, "stdout", SimpleNamespace(isatty=lambda: False))
+    assert resolve_human(None) is False
+
+
+def tracer_config(output_format=None):
+    return Config(
+        sample_hz=5.0,
+        columns=[EchoColumn(name="x", topic="/nope", field="data")],
+        output_format=output_format,
+    )
+
+
+def test_node_off_tty_gets_csv_sampler_and_no_pinned_header():
+    # pytest captures stdout, so it is not a tty here.
+    node = TracerNode(tracer_config())
+    assert node.sampler.human is False
+    assert node.pinned is None
+    node.destroy_node()
+
+
+def test_node_forced_human_off_tty_is_unpinned():
+    node = TracerNode(tracer_config(output_format="human"))
+    assert node.sampler.human is True
+    assert node.pinned is None
+    node.destroy_node()
+
+
+def test_node_forced_csv_off_tty_is_csv():
+    node = TracerNode(tracer_config(output_format="csv"))
+    assert node.sampler.human is False
+    assert node.pinned is None
+    node.destroy_node()

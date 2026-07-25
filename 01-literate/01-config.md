@@ -1,6 +1,6 @@
 ---
-version: "1.4"
-generated: "2026-07-24"
+version: "1.5"
+generated: "2026-07-25"
 ---
 
 # Config: the line-oriented `metawtf.conf` parser
@@ -28,6 +28,8 @@ across the package looks like this:
 flowchart LR
     A[metawtf.conf text] --> B[config.py<br/>parse_config]
     B -->|Config dataclass| C[tracer_node<br/>reads file, owns the loop]
+    C --> C1[resolve_human<br/>output_format or isatty]
+    C1 --> S[Sampler + optional<br/>PinnedHeader]
     C --> D[column_manager<br/>dispatches on column type]
     D --> E1[EchoColumnState /<br/>JsonEchoColumnState]
     D --> E2[HzColumnState]
@@ -42,6 +44,13 @@ exhaustive over a closed union of dataclasses rather than defensive against
 arbitrary dict shapes. Adding a new metric means adding one dataclass, one
 branch in the parser's dispatch, and one branch in the manager — the shape of
 the code makes the extension point obvious.
+
+The same seam carries the presentation policy introduced with the output
+format feature: the parser records *what the user asked for* (`human`, `csv`,
+or nothing), and the decision of what that means for a live process —
+including the tty auto-detection fallback — is deferred to `tracer_node`'s
+`resolve_human`. The config module knows the vocabulary of formats; it
+deliberately does not know what a terminal is.
 
 ## A tiny grammar, parsed by hand
 
@@ -87,7 +96,7 @@ under the project's control.
 ## Data classes, one per column shape
 
 The parsed result is a small family of dataclasses, closed under the four
-column metrics plus the timestamp configuration:
+column metrics plus the timestamp and output-format configuration:
 
 ```python
 @dataclass
@@ -115,16 +124,23 @@ class Config:
     sample_hz: float
     columns: list[EchoColumn | HzColumn | ProcCpuColumn | SysCpuColumn]
     time: TimeColumn = field(default_factory=TimeColumn)
+    # None means auto-detect from stdout (tty -> human, pipe -> csv).
+    output_format: str | None = None
 ```
 
 `ProcCpuColumn` and `SysCpuColumn` follow the same pattern (name plus a
-compiled `process` regex, or a `busy`/`idle` mode). Two things to notice.
+compiled `process` regex, or a `busy`/`idle` mode). Three things to notice.
 `HzColumn.match` and `ProcCpuColumn.process` hold *compiled* `re.Pattern`
 objects: regexes are compiled at load time so a malformed pattern is reported
 at startup, not on the first matching attempt, and the per-message hot path
-pays no compile cost. And `Config.time` defaults via
+pays no compile cost. `Config.time` defaults via
 `field(default_factory=TimeColumn)` so a config with no `time` directive still
-parses, and tests constructing a `Config` directly need not mention it.
+parses, and tests constructing a `Config` directly need not mention it. And
+`output_format` is a plain optional string rather than a new dataclass: unlike
+`TimeColumn`, which carries two tunables (`format`, `width`) and so earns its
+own type, the output format is a single enum-like value — `None`, `"human"`,
+or `"csv"` — where `None` is not "unset and forgotten" but a meaningful third
+state, *auto-detect*.
 
 ## The driver: line loop, then deferred cross-checks
 
@@ -143,11 +159,20 @@ for line_no, raw_line in enumerate(text.splitlines(), start=1):
             columns.append(parse_column(directive, positional, options))
         elif directive == "sample":
             sample_hz = parse_sample(positional, options, seen_singletons)
+        elif directive == "format":
+            output_format = parse_format(positional, options, seen_singletons)
         else:
             time_column = parse_time(positional, options, seen_singletons)
     except ConfigError as error:
         raise ConfigError(f"line {line_no}: {error}") from error
 ```
+
+The dispatch has a tidy shape: column metrics *accumulate* into a list, while
+`sample`, `format`, and `time` are *singletons* — file-global settings that
+may appear at most once, guarded by the shared `seen_singletons` set. The
+three singleton parsers differ in what they return (a float, a string, a
+`TimeColumn`) but are identical in skeleton, which is what makes adding a new
+singleton directive a five-line change rather than a refactor.
 
 The interesting subtlety is what *cannot* be checked line-by-line. The rule
 "an `hz` column's `window` must be at least one sample period" couples a
@@ -171,10 +196,56 @@ over the completed structure. The reason the rule exists at all is
 algorithmic: a window shorter than the sampling period cannot reliably contain
 two message arrivals at the row cadence, so the measured rate would be noise.
 
-Two other whole-file rules live in the loop itself: `seen_singletons` rejects
-a repeated `sample` or `time` directive (both are file-global settings, so
-duplicates are almost certainly a mistake), and an empty column list is
-rejected at the end — a config with no columns would trace nothing.
+One other whole-file rule lives in the loop's epilogue: an empty column list
+is rejected at the end — a config with no columns would trace nothing.
+
+## The `format` directive: policy up front, mechanism downstream
+
+The newest directive picks the output presentation, and it is worth reading
+as a study in how this codebase separates *policy* from *mechanism*:
+
+```python
+OUTPUT_FORMATS = {"human", "csv"}
+
+def parse_format(positional, options: dict, seen: set) -> str:
+    reject_singleton_repeat("format", seen)
+    if options:
+        raise ConfigError(f"'format' takes no key=value options: {sorted(options)}")
+    if positional not in OUTPUT_FORMATS:
+        raise ConfigError(
+            f"'format' must be one of {sorted(OUTPUT_FORMATS)},"
+            f" got {positional!r}"
+        )
+    return positional
+```
+
+Several small decisions add up here. The value is *positional only* — `format
+csv`, never `format mode=csv` — because with exactly one meaningful argument
+the `key=value` machinery would be ceremony, and the singleton-parsers already
+share the convention that a bare value is the directive's payload (`sample 5`
+works the same way). Validating against the `OUTPUT_FORMATS` set, rather than
+a pair of string comparisons, keeps the error message self-maintaining: add a
+third format to the set and the rejection text lists it for free. And a
+repeated `format` is an error, not an override, via the same
+`reject_singleton_repeat` helper that guards `sample` and `time` — for
+file-global settings, duplication is almost certainly a paste mistake, and
+silently honoring the second one would hide it.
+
+The deeper choice is what the parser does *not* decide. `Config.output_format`
+defaults to `None`, and `None` means auto-detect: `tracer_node.resolve_human`
+checks `sys.stdout.isatty()` and picks `human` on a terminal, `csv` on a pipe
+or redirect. This three-state design — explicit human / explicit csv / defer
+to the environment — is the classic *tri-state option* pattern, and it is the
+right home for the default because the honest answer to "what format should I
+emit?" depends on information (is stdout a terminal?) that only exists at
+runtime, not at parse time. A user watching a live trace gets aligned columns
+with a pinned header; the same config piped into a file or another tool gets
+clean machine-parseable csv; and either behavior can be pinned down with one
+line in `metawtf.conf` when the auto-detection guesses wrong — for example
+forcing `format csv` while watching output scroll past in a terminal, or
+`format human` when piping to `less`. Keeping the isatty probe out of
+`config.py` also keeps this module trivially testable: `parse_config` is a
+pure function of text, with no dependency on the process's file descriptors.
 
 ## The positional shorthand and the topic-twice trap
 
@@ -193,7 +264,11 @@ Note the dict *copy* (`{**options, ...}`) rather than mutation — the positiona
 is folded into the options map so the four column parsers can treat
 `options["topic"]` uniformly, while the caller's structure stays untouched.
 The sugar is scoped to the two directives where the topic is the natural
-primary argument; `proc_cpu` and `sys_cpu` reject positionals outright.
+primary argument; `proc_cpu` and `sys_cpu` reject positionals outright. The
+singletons are their mirror image: `sample` and `format` take a positional and
+*forbid* options, `time` takes options and forbids a positional — each
+directive claims exactly the token shape its semantics need, and `parse_line`'s
+strict tokenizer guarantees nothing else can slip through.
 
 ## Per-column validation: same checklist shape, different rules
 
@@ -291,10 +366,16 @@ catching half lives in the tracer node chapter).
   a `name` cannot contain a space. If patterns ever need that, a minimal
   quoted-string rule in `parse_line` would do it — but adding it speculatively
   now would complicate the grammar for a case nobody has hit.
-- **`sample` and `time` duplicate rules asymmetrically.** `sample` forbids all
-  options; `time` forbids positionals. Both guards are correct, but a small
-  table of "directive → allowed shape" would state the policy once instead of
-  twice in code.
+- **The singleton shape policy is stated three times.** `sample` and `format`
+  forbid options and require a positional; `time` forbids a positional. The
+  two `format`-style parsers are now nearly line-for-line identical apart from
+  the value coercion, so a small table of "directive → allowed shape" (or a
+  shared `parse_singleton_value` helper taking a validator) would state the
+  policy once instead of three times in code.
+- **A command-line `--format` override.** Today the only escape from
+  auto-detection is editing `metawtf.conf`. A CLI flag layered on top of
+  `Config.output_format` would make one-off overrides (`metawtf --format csv`)
+  cheaper, at the cost of a second place where the precedence rule lives.
 - **The `HzColumn` union-by-None.** `topic` and `match` are both optional
   fields with an exclusivity invariant enforced only at parse time. Two
   separate dataclasses (or a discriminated variant) would make the invariant

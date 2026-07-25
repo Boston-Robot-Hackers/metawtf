@@ -18,7 +18,8 @@ DEFAULT_ECHO_WIDTH = 8
 DEFAULT_HZ_WIDTH = 6
 DEFAULT_PROC_CPU_WIDTH = 6
 DEFAULT_SYS_CPU_WIDTH = 6
-DIRECTIVES = {"sample", "time", "echo", "hz", "proc_cpu", "sys_cpu"}
+DIRECTIVES = {"sample", "time", "format", "echo", "hz", "proc_cpu", "sys_cpu"}
+OUTPUT_FORMATS = {"human", "csv"}
 COLUMN_METRICS = {"echo", "hz", "proc_cpu", "sys_cpu"}
 TIME_KEYS = {"format", "width"}
 ECHO_KEYS = {
@@ -83,6 +84,8 @@ class Config:
     sample_hz: float
     columns: list[EchoColumn | HzColumn | ProcCpuColumn | SysCpuColumn]
     time: TimeColumn = field(default_factory=TimeColumn)
+    # None means auto-detect from stdout (tty -> human, pipe -> csv).
+    output_format: str | None = None
 
 
 def sanitize_topic(topic: str) -> str:
@@ -92,6 +95,7 @@ def sanitize_topic(topic: str) -> str:
 def parse_config(text: str) -> Config:
     sample_hz = DEFAULT_SAMPLE_HZ
     time_column = TimeColumn()
+    output_format = None
     columns = []
     seen_singletons = set()
     for line_no, raw_line in enumerate(text.splitlines(), start=1):
@@ -104,6 +108,8 @@ def parse_config(text: str) -> Config:
                 columns.append(parse_column(directive, positional, options))
             elif directive == "sample":
                 sample_hz = parse_sample(positional, options, seen_singletons)
+            elif directive == "format":
+                output_format = parse_format(positional, options, seen_singletons)
             else:
                 time_column = parse_time(positional, options, seen_singletons)
         except ConfigError as error:
@@ -111,7 +117,12 @@ def parse_config(text: str) -> Config:
     if not columns:
         raise ConfigError("no column directives (echo/hz/proc_cpu/sys_cpu)")
     validate_windows(columns, sample_hz)
-    return Config(sample_hz=sample_hz, columns=columns, time=time_column)
+    return Config(
+        sample_hz=sample_hz,
+        columns=columns,
+        time=time_column,
+        output_format=output_format,
+    )
 
 
 def validate_windows(columns: list, sample_hz: float) -> None:
@@ -172,6 +183,18 @@ def parse_time(positional, options: dict, seen: set) -> TimeColumn:
         format=options.get("format"),
         width=parse_width(options.get("width")),
     )
+
+
+def parse_format(positional, options: dict, seen: set) -> str:
+    reject_singleton_repeat("format", seen)
+    if options:
+        raise ConfigError(f"'format' takes no key=value options: {sorted(options)}")
+    if positional not in OUTPUT_FORMATS:
+        raise ConfigError(
+            f"'format' must be one of {sorted(OUTPUT_FORMATS)},"
+            f" got {positional!r}"
+        )
+    return positional
 
 
 def reject_singleton_repeat(directive: str, seen: set) -> None:

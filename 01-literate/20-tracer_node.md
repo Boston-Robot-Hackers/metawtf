@@ -1,6 +1,6 @@
 ---
-version: "1.4"
-generated: "2026-07-24"
+version: "1.5"
+generated: "2026-07-25"
 ---
 
 # Tracer Node: assembling the pieces and running until you quit
@@ -10,14 +10,16 @@ that imports `rclpy` at module scope, and the only one that knows about "a
 running program with a config file and a keypress to quit." Every other module
 (`config`, `field_extract`, `msg_type`, `qos_select`, `topic_match`,
 `echo_column`, `hz_column`, `json_column`, `rate_counter`, `proc_cpu_column`,
-`sys_cpu_column`, `column_manager`, `sampler`) is logic that `TracerNode` wires
-into something that actually subscribes to topics and prints CSV.
+`sys_cpu_column`, `column_manager`, `sampler`, `terminal`) is logic that
+`TracerNode` wires into something that actually subscribes to topics and
+prints rows.
 
 That placement is a deliberate architectural choice: because only this file
 touches `rclpy`, everything below it can be unit-tested without a ROS context,
 and the node itself stays thin — assembly and lifecycle, no policy. *Which*
 topics to subscribe to and *when* lives in `ColumnManager`; *how* a row is
-formatted lives in `Sampler`. The node just connects them and keeps time.
+formatted lives in `Sampler`; *how* a header is pinned to the screen lives in
+`terminal.PinnedHeader`. The node just connects them and keeps time.
 
 ## How the pieces fit together
 
@@ -32,7 +34,8 @@ flowchart TD
         T2[sample_hz timer] --> OT[on_tick] --> SM[Sampler.tick]
         SUB[subscription callbacks] -->|on_message| S
         SM -->|reads| S
-        SM --> OUT[stdout CSV]
+        SM --> OUT[stdout rows]
+        SM -.->|on_header hook| PH[PinnedHeader]
     end
     subgraph key watcher thread
         KB[stdin, cbreak mode] -->|space| P[toggle_pause]
@@ -41,6 +44,8 @@ flowchart TD
     P -->|is_paused checked by| OT
     E -->|ends| SL[spin loop]
     CFG[metawtf.conf] -->|loaded once| CM[ColumnManager + Sampler]
+    CFG -->|format directive| RH[resolve_human]
+    RH -->|human=...| SM
 ```
 
 Three things to notice about this picture:
@@ -52,8 +57,8 @@ Three things to notice about this picture:
 - **The key watcher is the only second thread**, and it touches ROS state only
   through two narrow channels: a `threading.Event` (to stop) and a boolean
   flag on the node (to pause). Both are atomic under the GIL, so no locks.
-- **The config file flows in once, at startup**, and shapes both collaborators.
-  There is no live reload path.
+- **The config file flows in once, at startup**, and shapes both collaborators
+  plus the output-format decision. There is no live reload path.
 
 ## The node is mostly a constructor
 
@@ -63,7 +68,18 @@ class TracerNode(Node):
         super().__init__("metawtf")
         self.manager = ColumnManager(self, config)
         self.states = self.manager.states
-        self.sampler = Sampler(self.states, config.time)
+        is_human = resolve_human(config.output_format)
+        # Pinning needs escape sequences on a real terminal; `format human`
+        # forced into a pipe still gets the aligned text, just unpinned.
+        self.pinned = (
+            PinnedHeader() if is_human and sys.stdout.isatty() else None
+        )
+        self.sampler = Sampler(
+            self.states,
+            config.time,
+            human=is_human,
+            on_header=self.pinned.show if self.pinned is not None else None,
+        )
         self.is_paused = False
         self.manager.scan()
         self.create_timer(RESCAN_PERIOD_SEC, self.manager.scan)
@@ -75,9 +91,23 @@ column state objects); the node hands that *same list object* to the sampler.
 That aliasing is what makes dynamic columns work end to end: when a `match` hz
 spec or a `json` echo expander appends a newly discovered column to `states`,
 the sampler — holding the same reference — sees it on the next tick and
-reprints its header (a documented CSV caveat). No event bus, no callback
-registration; just Python's reference semantics doing the work of an observer
-pattern.
+reprints its header (a documented CSV caveat; in human mode the pinned header
+is redrawn in place instead). No event bus, no callback registration; just
+Python's reference semantics doing the work of an observer pattern.
+
+The new wrinkle since F07 is the output-format wiring, which is really two
+decisions the constructor keeps carefully separate:
+
+- **`human=is_human`** chooses the *render mode* — aligned padded columns
+  versus pure RFC-4180 CSV. This travels into the sampler and affects every
+  header and row it formats.
+- **`on_header=self.pinned.show`** chooses the *delivery mechanism* for
+  headers, and is only attached when the header can actually be pinned —
+  which requires both human mode *and* a real terminal, because the pinning
+  is ANSI escape sequences. The edge case is handled with a comment worth
+  quoting: "`format human` forced into a pipe still gets the aligned text,
+  just unpinned." Format and pinning are orthogonal; one is about how text
+  looks, the other about where the terminal scrolls.
 
 Two timers run at unrelated cadences for unrelated reasons. `manager.scan` at
 1 Hz (`RESCAN_PERIOD_SEC`) is a discovery mechanism: it re-queries the topic
@@ -87,6 +117,70 @@ configured `sample_hz` and asks the sampler to emit one row. Note that the
 initial `manager.scan()` is called synchronously in the constructor — topics
 that already exist are picked up immediately, without waiting a full second
 for the first timer fire.
+
+## Choosing an output format: explicit beats implicit, but implicit tries to be right
+
+```python
+def resolve_human(output_format: str | None) -> bool:
+    # The config's `format` directive wins; otherwise a tty gets the aligned
+    # human format and pipes/redirects get pure csv.
+    if output_format is not None:
+        return output_format == "human"
+    return sys.stdout.isatty()
+```
+
+This tiny function encodes a classic CLI ergonomics principle, the one
+`git --color=auto` and `ls` on a tty have used for decades: **when the user
+has spoken, obey; when they haven't, inspect the environment.** A `format`
+directive in the config is a singleton validated by `parse_config` to be
+`human` or `csv` (anything else is a `ConfigError`), so by the time it reaches
+`resolve_human` the only question is whether it exists at all. `None` is the
+auto-detect sentinel, and the fallback is `sys.stdout.isatty()` — the same
+predicate the key watcher already uses on stdin, applied here to the output
+side.
+
+The auto-detect matters because the two consumers want opposite things. A
+human staring at a terminal wants aligned columns that don't drift as values
+change length (and is happy to sacrifice exact fidelity — over-wide values are
+truncated with an ellipsis). A spreadsheet or a downstream script wants strict
+CSV: no padding, no truncation, no decoration. Guessing wrong in either
+direction is immediately visible and annoying, and asking every user to
+configure it would be worse. Note that the function is module-level and pure
+apart from the one `isatty` probe — deliberate, since it keeps the policy
+testable without constructing a node.
+
+## The pinned header, from the node's side
+
+The node doesn't know anything about escape sequences; it only knows the
+contract: a `PinnedHeader` (from `metawtf/terminal.py`) exposes a `show`
+method taking a header string, and a `close` method to undo the effect. The
+sampler emits *every* header through the single `on_header` hook, so the
+first call sets the pin up and later calls — when the column set grows
+mid-run — redraw it in place rather than scrolling a fresh header past. From
+the node's perspective the interesting part is only the lifecycle pairing:
+
+```mermaid
+sequenceDiagram
+    participant N as TracerNode
+    participant S as Sampler
+    participant P as PinnedHeader
+    N->>S: Sampler(..., on_header=P.show)
+    S->>P: show(header)  # first header: set scroll region
+    S->>P: show(header)  # column growth: redraw in place
+    Note over N: ... shutdown (q, Ctrl-C, exception) ...
+    N->>P: close()       # reset region, drop cursor below output
+```
+
+Why pin at all? In human mode the header is the column legend, and at 5 Hz
+the data rows would scroll it off the screen within seconds, leaving the
+reader to count commas to figure out which value is which. `PinnedHeader`
+solves this with the DEC scroll-region escape (`DECSTBM`), a terminal feature
+dating to the VT100 era: scrolling is confined to the rows *below* the header,
+so data rows churn past at the bottom while the header stays put. One
+consequence the terminal module documents honestly: rows scrolled off the top
+of a scroll region are *not* added to scrollback by xterm-style terminals —
+so human mode is for watching, and a full record still means `format csv`
+redirected to a file.
 
 ## Pause stops the output, not the pipeline
 
@@ -102,7 +196,9 @@ While paused, messages keep arriving and column states keep updating; only row
 printing stops. That choice means the first row after resuming shows *current*
 values rather than a backlog of stale ones, and hz columns keep their rate
 windows warm. It also makes `toggle_pause` a trivial flag flip — safe to call
-from the key-watcher thread because a boolean assignment can't tear.
+from the key-watcher thread because a boolean assignment can't tear. The
+toggle itself announces the state change on `stderr` ("metawtf paused." /
+"metawtf resumed."), keeping the stdout stream clean.
 
 Two clocks feed each tick: `time.monotonic()` for the rate/ staleness math
 (immune to NTP jumps, which is what you want when measuring intervals) and
@@ -125,8 +221,9 @@ loop: `Path(__file__)` at runtime points at the *install-space* copy, so a
 user's edits to the source config had no effect until the next
 `colcon build`. Reading from the current directory is the ordinary CLI
 convention — edit `./metawtf.conf`, run `metawtf`, see the change immediately.
-(The file itself is a line-based directive format, not YAML; its grammar is
-the `config` module's chapter.)
+(The file itself is a line-based directive format, not YAML; its grammar —
+including the `format` directive that feeds `resolve_human` — is the `config`
+module's chapter.)
 
 ## A tiny CLI, on purpose
 
@@ -155,6 +252,11 @@ gives the same UX for an unknown argument. A nice small invariant falls out of
 the branch structure: `-f` as the last word matches neither branch (there is
 no value to pop) and falls through to the error, so a dangling `-f` is
 rejected for free.
+
+Notice what is *not* a flag: the output format. It lives only in the config
+file, because it's a property of a tracing session (what am I watching, and
+where is it going?) rather than a per-invocation toggle — and the
+`isatty` auto-detect already handles the common per-invocation variation.
 
 ## Keys: quit, pause, help
 
@@ -212,7 +314,7 @@ thread is mid-way through writing. Third, the thread is a *daemon*: a
 blocking `read(1)` on stdin can never be interrupted from another thread, so
 daemon-ness is what guarantees a stuck read can't keep the process alive after
 the main thread exits. And the "metawtf running" prompt goes to `stderr`,
-never `stdout`, so it can't corrupt the CSV a spreadsheet reads.
+never `stdout`, so it can't corrupt the output stream a spreadsheet reads.
 
 ## The spin loop and a clean shutdown
 
@@ -252,23 +354,49 @@ def main(args=None) -> None:
         raise SystemExit(f"metawtf: {error}")
     rclpy.init(args=args)
     node = TracerNode(config)
-    ...
+    try:
+        spin_until_quit(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        # Reset the scroll region before the farewell so the prompt and the
+        # message land below the pinned-header output.
+        if node.pinned is not None:
+            node.pinned.close()
+        print("metawtf stopped.", file=sys.stderr)
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 ```
 
-Note the ordering: the config is loaded and validated *before* `rclpy.init`.
-A missing file or a malformed directive — already translated to `ConfigError`
-by `load_config` — becomes a one-line `metawtf: ...` exit message instead of a
-traceback, and no ROS context is ever created for a run that was doomed from
-the first line. Fail fast, and fail before acquiring resources you would have
-to release.
+Note the ordering at startup: the config is loaded and validated *before*
+`rclpy.init`. A missing file or a malformed directive — already translated to
+`ConfigError` by `load_config` — becomes a one-line `metawtf: ...` exit
+message instead of a traceback, and no ROS context is ever created for a run
+that was doomed from the first line. Fail fast, and fail before acquiring
+resources you would have to release.
 
-`main`'s own `finally` handles the rclpy side: both `KeyboardInterrupt` and
+The shutdown `finally` is now a carefully ordered teardown, and the *first*
+step is the newest: `node.pinned.close()` runs **before** the "metawtf
+stopped." line. The order is not cosmetic. While the pinned header is active,
+the terminal's scroll region excludes the header rows, so any text printed
+normally — including the farewell message and the shell prompt that follows
+— would be confined to the scroll region and could land in the middle of the
+screen or be overwritten by the frozen header. `close()` restores the
+full-screen scroll region and drops the cursor below the output; only then is
+it safe to print anything. Both `KeyboardInterrupt` and
 `ExternalShutdownException` are treated as ordinary "time to stop," so neither
 prints a traceback; the node is destroyed explicitly; and `rclpy.shutdown()`
 is guarded by `rclpy.ok()` because calling it after the signal handler already
-shut the context down would raise. The "metawtf stopped." line goes to
-`stderr`, same as every other piece of chrome, keeping `stdout` a pure CSV
-stream from first byte to last.
+shut the context down would raise. The farewell goes to `stderr`, same as
+every other piece of chrome, keeping `stdout` a pure data stream from first
+byte to last.
+
+The symmetry is the design principle: the program acquires two kinds of
+terminal state — the tty's input mode (cbreak, restored by `spin_until_quit`'s
+`finally`) and the scroll region (set by `PinnedHeader.setup`, reset by
+`main`'s `finally`) — and each is unwound by the innermost scope that owns it,
+inside `finally` blocks that run on every exit path.
 
 ## Observations for future improvement
 
@@ -282,13 +410,23 @@ stream from first byte to last.
 - **No live reconfiguration.** Editing `metawtf.conf` mid-run has no effect;
   the config is read once at startup. A SIGHUP-driven reload — or simply
   re-running `load_config` from the 1 Hz scan when the file's mtime changes —
-  could be added if long traces need it.
+  could be added if long traces need it. Note the format decision compounds
+  this: even a reload couldn't cleanly *unpin* or *re-pin* the header mid-run
+  without reconstructing the sampler, so format changes would likely need to
+  stay restart-only anyway.
+- **The format auto-detect probes stdout once, at construction.** Redirecting
+  output mid-run (unusual but possible via shell job control) leaves the
+  format stale. A defensible simplification — but worth naming.
+- **`resolve_human` and the `PinnedHeader` condition both call
+  `sys.stdout.isatty()` independently.** Two probes of the same predicate at
+  two moments; they can't disagree today (nothing runs between them), but a
+  single computed `is_tty` would make the coupling explicit.
 - **Pause state is invisible in the output.** A paused run prints nothing at
-  all, so a piped consumer can't distinguish "paused" from "no messages."
-  A `# paused` marker line to stdout (comments are a documented CSV caveat
-  here) or a periodic stderr heartbeat would make the state observable.
+  all, so a piped consumer can't distinguish "paused" from "no messages." The
+  stderr announcement helps an interactive user but not a downstream process;
+  a periodic stderr heartbeat would make the state observable there too.
 - **`on_tick`'s two clocks can disagree under suspension.** If the machine
   sleeps mid-run, wall time jumps but monotonic time does not; hz windows stay
   correct while the time column leaps. That is arguably the right behavior,
-  but a reader of the CSV has no way to know a gap was a suspend rather than
-  silence.
+  but a reader of the output has no way to know a gap was a suspend rather
+  than silence.

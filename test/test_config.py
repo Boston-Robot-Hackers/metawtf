@@ -362,6 +362,36 @@ def test_repeated_time_directive_raises():
         load("time width=7\ntime width=8\necho /odom field=x\n")
 
 
+def test_format_defaults_to_none_for_auto_detect():
+    config = load("echo /odom field=x\n")
+    assert config.output_format is None
+
+
+def test_format_human_and_csv_parse():
+    assert load("format human\necho /odom field=x\n").output_format == "human"
+    assert load("format csv\necho /odom field=x\n").output_format == "csv"
+
+
+def test_format_bad_value_raises():
+    with pytest.raises(ConfigError, match="'format'"):
+        load("format json\necho /odom field=x\n")
+
+
+def test_format_missing_value_raises():
+    with pytest.raises(ConfigError, match="'format'"):
+        load("format\necho /odom field=x\n")
+
+
+def test_format_with_options_raises():
+    with pytest.raises(ConfigError, match="no key=value"):
+        load("format human width=3\necho /odom field=x\n")
+
+
+def test_repeated_format_directive_raises():
+    with pytest.raises(ConfigError, match="repeated 'format'"):
+        load("format human\nformat csv\necho /odom field=x\n")
+
+
 def test_sample_with_options_raises():
     with pytest.raises(ConfigError, match="no key=value"):
         load("sample 2 width=3\necho /odom field=x\n")

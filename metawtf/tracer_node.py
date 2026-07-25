@@ -20,6 +20,7 @@ from rclpy.node import Node
 from metawtf.column_manager import ColumnManager
 from metawtf.config import Config, ConfigError, load_config
 from metawtf.sampler import Sampler
+from metawtf.terminal import PinnedHeader
 
 CONFIG_FILENAME = "metawtf.conf"
 RESCAN_PERIOD_SEC = 1.0
@@ -43,7 +44,18 @@ class TracerNode(Node):
         super().__init__("metawtf")
         self.manager = ColumnManager(self, config)
         self.states = self.manager.states
-        self.sampler = Sampler(self.states, config.time)
+        is_human = resolve_human(config.output_format)
+        # Pinning needs escape sequences on a real terminal; `format human`
+        # forced into a pipe still gets the aligned text, just unpinned.
+        self.pinned = (
+            PinnedHeader() if is_human and sys.stdout.isatty() else None
+        )
+        self.sampler = Sampler(
+            self.states,
+            config.time,
+            human=is_human,
+            on_header=self.pinned.show if self.pinned is not None else None,
+        )
         self.is_paused = False
         self.manager.scan()
         self.create_timer(RESCAN_PERIOD_SEC, self.manager.scan)
@@ -64,6 +76,14 @@ class TracerNode(Node):
 
 def default_config_path() -> Path:
     return Path.cwd() / CONFIG_FILENAME
+
+
+def resolve_human(output_format: str | None) -> bool:
+    # The config's `format` directive wins; otherwise a tty gets the aligned
+    # human format and pipes/redirects get pure csv.
+    if output_format is not None:
+        return output_format == "human"
+    return sys.stdout.isatty()
 
 
 def print_help() -> None:
@@ -142,6 +162,10 @@ def main(args=None) -> None:
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        # Reset the scroll region before the farewell so the prompt and the
+        # message land below the pinned-header output.
+        if node.pinned is not None:
+            node.pinned.close()
         print("metawtf stopped.", file=sys.stderr)
         node.destroy_node()
         if rclpy.ok():
