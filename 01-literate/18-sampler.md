@@ -182,31 +182,27 @@ representation: a list of `(text, width)` pairs:
 
 ```python
     def format_header(self) -> str:
-        cells = [("time", effective_width("time", self.time.width))]
-        cells += [
-            (column.name, effective_width(column.name, column.width))
-            for column in self.columns
-        ]
+        cells = [("time", self.time.width)]
+        cells += [(column.name, column.width) for column in self.columns]
         return self.join_row(cells, is_header=True)
 
     def format_row(self, now_monotonic: float, now_wall: datetime) -> str:
         stamp = format_timestamp(now_wall, self.time.format)
-        cells = [(stamp, effective_width("time", self.time.width))]
+        cells = [(stamp, self.time.width)]
         for column in self.columns:
             value = column.sample(now_monotonic)
-            width = effective_width(column.name, column.width)
-            cells.append(("" if value is None else value, width))
+            cells.append(("" if value is None else value, column.width))
         return self.join_row(cells, is_header=False)
 ```
 
 Three details carry the design here:
 
-- **Both header and row use the same width for a column** — the
-  `effective_width` of its *name*, not of its current value. That is what
-  keeps the header aligned over the data in human mode: every row, including
-  the header, is laid out against the same per-column width. Computing the
-  header's width from the header text and the row's width from something else
-  would break alignment immediately.
+- **Both header and row use the same width for a column** — the column's
+  configured `width`, unchanged. That is what keeps the header aligned over the
+  data in human mode: every row, including the header, is laid out against the
+  same per-column width. When a name is wider than that width the *header* is
+  cut to fit (see below), never the column widened — so the column's extent is
+  fixed by its `width` and both rows honor it.
 - **`None` from a column becomes an empty string**, never `"None"` and never
   `0`. A column that has nothing to report yet (its topic hasn't published,
   say) leaves a blank cell, preserving the row's column count.
@@ -231,31 +227,28 @@ Note the asymmetry in the interface: `join_csv` ignores `is_header` entirely —
 a CSV header is just a row that happens to contain names — while `join_human`
 needs it, for reasons explained below.
 
-## effective_width: headers wider than their columns
-
-```python
-def effective_width(name: str, width: int | None) -> int | None:
-    # A header longer than its column's width overflows and pushes that row's
-    # later cells right of the data rows; widen the column to fit the header
-    # so header and rows always line up. None keeps the no-padding semantics.
-    if width is None:
-        return None
-    return max(width, len(name))
-```
+## Headers wider than their columns: keep the tail
 
 A column's configured `width` is chosen for its *data* — a rate column might
-declare width 6 because `142.50` fits. But its header might be
-`camera_rate_hz`, eleven characters. Without correction, the header overflows
-its column and pushes that row's later cells right of where the data rows put
-theirs; header and rows would never line up. `effective_width` widens the
-column to at least fit the name, so the header and every data row agree on the
-column's extent. `None` is passed through untouched, preserving the
-"no layout constraints at all" semantics a user gets by omitting `width`.
+declare width 6 because `142.50` fits. But its header might be `cpu_nav2`,
+eight characters. An earlier design widened the column to fit the name; F08
+reverses that, because a wide name would blow up the column and waste terminal
+width on the label. Instead the header is cut to the column's width — but,
+unlike a data value, it keeps its **tail**:
 
-In csv mode this function still runs but its result is discarded — `join_csv`
-ignores widths. It is computed anyway because the cell collection is shared;
-the alternative (computing widths per mode) would split the pipeline earlier
-for no real gain.
+```python
+def truncate_tail(text: str, width: int | None) -> str:
+    if width is None or len(text) <= width:
+        return text
+    return "…" + text[-(width - 1):]
+```
+
+The distinguishing part of a metric name is usually its end — the topic in
+`cpu_nav2`, the field in `pose_z` — so `cpu_nav2` in a width-6 column becomes
+`…_nav2`, not `cpu_n…`. A leading `…` signals the elision and the result fits
+the width exactly, so header and data rows stay aligned. `None` width (the
+"no layout constraints" case a user gets by omitting `width`) is passed through
+untouched. csv mode ignores widths entirely, so headers there are never cut.
 
 ## join_csv: the pure mode
 
@@ -302,15 +295,10 @@ and the price of that guarantee is that over-wide values are cut:
 
 ```python
 def join_human(cells: list[tuple[str, int | None]], is_header: bool) -> str:
-    # The comma binds to the value it follows and padding comes after it, so
-    # columns line up in the terminal; a single space always follows the
-    # comma. Values are cut to the column width so a long value cannot push a
-    # row's later cells right of the header; headers are never cut.
     parts = []
     last_index = len(cells) - 1
     for index, (text, width) in enumerate(cells):
-        if not is_header:
-            text = truncate(text, width)
+        text = truncate_tail(text, width) if is_header else truncate(text, width)
         if index < last_index:
             text = f"{text}, "
             width = None if width is None else width + 2
@@ -320,8 +308,10 @@ def join_human(cells: list[tuple[str, int | None]], is_header: bool) -> str:
 
 Three steps, in deliberate order:
 
-**Step 1 — truncate (data rows only).** Before anything else, a value that
-exceeds its column's width is shortened:
+**Step 1 — truncate.** Before anything else, an over-wide cell is shortened to
+its column width. Data values and headers each get cut, but from opposite ends
+— a data value keeps its head (`truncate`, `…` at the end), a header keeps its
+tail (`truncate_tail`, `…` at the front):
 
 ```python
 def truncate(text: str, width: int | None) -> str:
@@ -337,10 +327,9 @@ of F07: human mode *does* truncate, because for a live display a slightly
 shortened value that stays in its column is more truthful than a full value
 that breaks the table. Truncation happens first so that every later step —
 separator, padding — operates on text whose length is already known to fit.
-The `is_header` guard exempts the header row: a header is metadata, not data,
-and cutting `camera_rate_hz` to `camer…` would mislabel the column to save
-nothing — thanks to `effective_width`, the header always fits anyway, so the
-guard is belt-and-braces for columns whose width is `None`.
+The `is_header` branch (F08) cuts the header from the front instead of the
+back, so a wide `cpu_nav2` label becomes `…_nav2` and keeps the part that
+tells the columns apart.
 
 **Step 2 — separate.** Every cell except the last gets `", "` appended —
 comma *then* a single space. The comma binds to the value it terminates, and
@@ -419,8 +408,7 @@ the user at the cost of that precision.
   `width` then has `", "` appended and the total padded to `width + 2` — so the
   *value* honors the configured width and the column's visual extent is
   `width + 2` for all but the last cell. Consistent, but a user who sets
-  `width=6` might expect a 6-character column and get 8; the width bump could
-  be folded into `effective_width` to make the arithmetic live in one place.
+  `width=6` might expect a 6-character column and get 8.
 - **`human` as a `bool` forecloses a third mode.** The flag reads naturally
   today, but a `mode: Literal["human", "csv"]` (or an enum) would extend more
   gracefully — to a `jsonl` mode, say — than a second boolean ever would.
@@ -435,10 +423,6 @@ the user at the cost of that precision.
   "the column set changed." If removal or replacement ever became possible, a
   swap that preserved the count would slip past the guard; keying on column
   identity (e.g. a tuple of names) would be more robust.
-- **`effective_width` is recomputed for every cell of every row.** Cheap, but
-  the column widths change only when the column set or config does; caching
-  them alongside `header_width` would make the per-tick path marginally leaner
-  and put the width logic in one place.
 - **`format_timestamp` truncates rather than rounds.** `microsecond // 1000`
   discards sub-millisecond precision by truncation, not rounding. Harmless for
   a human-readable timestamp column, but worth knowing if timestamps are ever

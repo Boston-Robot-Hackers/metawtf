@@ -37,11 +37,13 @@ class PinnedHeader:
             self.setup(header)
 
     def setup(self, header: str) -> None:
+        # Clear first so the header starts alone on a clean screen instead of
+        # amid whatever the terminal already showed, where it is easy to miss.
         size = self.get_size()
         rows = self.header_rows(header, size.columns)
         top = min(rows + 1, size.lines)
         self.write(
-            f"{CSI}1;1H{header}\n"
+            f"{CSI}2J{CSI}1;1H{header}\n"
             f"{CSI}{top};{size.lines}r"
             f"{CSI}{size.lines};1H"
         )

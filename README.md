@@ -167,12 +167,13 @@ never a crash. Floats are formatted with **2 decimals**.
 the screen via an ANSI scroll region, so rows scroll beneath it and the
 header never moves. Cells are padded so columns line up: the comma sits right
 after each value followed by a single space. `width` is a **minimum** column
-width; a value longer than it is truncated with `…` so rows never drift out
-of alignment. Headers are never truncated — give the column a short `name=`
-if the header itself is wide. Columns that omit `width` use the metric's
-default (`8` for echo, `6` for hz and proc_cpu); the time column is unpadded
-unless given an explicit `width`. Either way a column is widened as needed to
-fit its header name. Quitting (`q` or Ctrl-C) restores the screen and leaves
+width; a value longer than it is truncated with `…` at the end (its head is
+kept) so rows never drift out of alignment. A header wider than the column is
+truncated too, but keeps its **tail** (`…` at the front) so the distinguishing
+suffix of a name like `cpu_nav2` survives; give the column a short `name=` if
+you want the whole header. Columns that omit `width` use the metric's default
+(`8` for echo, `6` for hz and proc_cpu); the time column is unpadded unless
+given an explicit `width`. Quitting (`q` or Ctrl-C) restores the screen and leaves
 the shell prompt below the output.
 
 ```

@@ -110,14 +110,17 @@ size = self.get_size()
 rows = self.header_rows(header, size.columns)
 top = min(rows + 1, size.lines)
 self.write(
-    f"{CSI}1;1H{header}\n"
+    f"{CSI}2J{CSI}1;1H{header}\n"
     f"{CSI}{top};{size.lines}r"
     f"{CSI}{size.lines};1H"
 )
 ```
 
-Four steps in one write. `CSI 1;1H` homes the cursor to the top-left so the
-header lands on row 1 regardless of where the shell left the cursor. The
+Five steps in one write. `CSI 2J` clears the whole screen first (F09): setup
+pins the header onto the *current* screen, so without a clear the header prints
+amid whatever the terminal already showed and is easy to miss — clearing gives
+it a clean start at the top. `CSI 1;1H` then homes the cursor to the top-left so
+the header lands on row 1 regardless of where the shell left the cursor. The
 header is printed, followed by a newline so the cursor sits just under it.
 Then `CSI top;Lr` declares the scroll region starting below the header.
 Finally `CSI L;1H` parks the cursor on the *last* row — which is where

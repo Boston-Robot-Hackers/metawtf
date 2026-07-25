@@ -21,8 +21,17 @@ def test_setup_draws_header_and_pins_region_below_it():
     out = io.StringIO()
     pinned = make_pinned(out)
     pinned.setup("time, a")
-    assert out.getvalue() == "\033[1;1Htime, a\n\033[2;24r\033[24;1H"
+    assert out.getvalue() == "\033[2J\033[1;1Htime, a\n\033[2;24r\033[24;1H"
     assert pinned.is_active is True
+
+
+def test_setup_clears_the_screen_before_drawing_the_header():
+    out = io.StringIO()
+    pinned = make_pinned(out)
+    pinned.setup("time, a")
+    value = out.getvalue()
+    assert value.startswith("\033[2J")
+    assert value.index("\033[2J") < value.index("time, a")
 
 
 def test_setup_counts_wrapped_header_rows():
@@ -30,7 +39,7 @@ def test_setup_counts_wrapped_header_rows():
     pinned = make_pinned(out)
     header = "x" * 90  # wraps to two rows on an 80-column terminal
     pinned.setup(header)
-    assert out.getvalue() == f"\033[1;1H{header}\n\033[3;24r\033[24;1H"
+    assert out.getvalue() == f"\033[2J\033[1;1H{header}\n\033[3;24r\033[24;1H"
 
 
 def test_setup_clamps_region_when_header_fills_the_screen():
@@ -96,7 +105,7 @@ def test_show_sets_up_on_first_header_and_redraws_after():
     out = io.StringIO()
     pinned = make_pinned(out)
     pinned.show("time, a")
-    assert out.getvalue() == "\033[1;1Htime, a\n\033[2;24r\033[24;1H"
+    assert out.getvalue() == "\033[2J\033[1;1Htime, a\n\033[2;24r\033[24;1H"
     pinned.show("time, a, b")
     assert out.getvalue().endswith(
         "\0337\033[1;1H\033[2K\033[1;1Htime, a, b\033[2;24r\0338"

@@ -4,7 +4,18 @@
 
 ## State
 Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). Full suite:
-**217 passed** via `python3 -m pytest test/`.
+**219 passed** via `python3 -m pytest test/`.
+
+**F08 (header tail-truncation): DONE and closed** — a column header wider than
+its width is now cut to the width keeping its **tail** (`…` at front, e.g.
+`cpu_nav2`→`…_nav2`); columns no longer widen to fit the name. `effective_width`
+removed from `sampler.py`; `truncate_tail` added; data cells still keep their
+head. README + literate 18-sampler updated. Uncommitted.
+
+**F09 (clear screen on start): DONE and closed** — `PinnedHeader.setup` emits
+`CSI 2J` before drawing so the first pinned header lands on a clean screen (was
+easy to miss amid prior terminal content). Pinned/tty path only; csv/redirect
+untouched. Literate X02-terminal updated. Uncommitted.
 
 **F07 (output formats + pinned header): DONE and closed** — `format human|csv`
 directive (`Config.output_format`, None = auto-detect); `Sampler` takes
@@ -13,8 +24,8 @@ keyword-only `human=` plus an `on_header` hook and renders either padded,
 `PinnedHeader` freezes the header via an ANSI scroll region (DECSTBM) with
 clean restore on quit; `tracer_node` resolves the mode (`format` wins, else
 `sys.stdout.isatty()`) and wires `pinned.show` as `on_header`. csv mode
-verified end-to-end against a live `ros2 topic pub`; the pty eyeball of the
-pinned header on a real terminal is left to the user. Docs: spec, README,
+verified end-to-end against a live `ros2 topic pub`; pinned header on a real
+terminal verified by the user 2026-07-25. Docs: spec, README,
 `metawtf.conf` grammar, literate regen (01, 18, 20, new X02-terminal,
 00-overview bumped). Gotcha: xterm-style terminals do not add rows scrolled
 off a scroll region to scrollback — redirect csv for a full record.

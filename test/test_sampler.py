@@ -76,9 +76,9 @@ def test_default_time_keeps_millisecond_format():
     assert out.getvalue().splitlines()[1] == "12:00:01.200, 1"
 
 
-def test_column_widens_to_fit_long_header():
-    # cpu_nav2 (8 chars) in a width-6 column: without widening the header
-    # overflows and its later cells drift right of the data rows.
+def test_long_header_truncates_to_its_tail():
+    # cpu_nav2 (8 chars) in a width-6 column: the header keeps its tail so the
+    # distinguishing topic suffix survives and header/rows stay aligned.
     out = io.StringIO()
     columns = [
         FakeColumn("cpu_nav2", "100.0%", width=6),
@@ -87,8 +87,16 @@ def test_column_widens_to_fit_long_header():
     sampler = Sampler(columns, out=out, human=True)
     sampler.tick(0.0, MIDNIGHT)
     lines = out.getvalue().splitlines()
-    assert lines[0] == "time, cpu_nav2, hz    "
-    assert lines[1] == "00:00:00.000, 100.0%,   20.00 "
+    assert lines[0] == "time, …_nav2, hz    "
+    assert lines[1] == "00:00:00.000, 100.0%, 20.00 "
+
+
+def test_header_shorter_than_width_is_untouched():
+    out = io.StringIO()
+    columns = [FakeColumn("hz", "20.00", width=6)]
+    sampler = Sampler(columns, out=out, human=True)
+    sampler.tick(0.0, MIDNIGHT)
+    assert out.getvalue().splitlines()[0] == "time, hz    "
 
 
 def test_human_truncates_long_value_with_ellipsis():

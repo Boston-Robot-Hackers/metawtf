@@ -59,20 +59,16 @@ class Sampler:
             print(header, file=self.out)
 
     def format_header(self) -> str:
-        cells = [("time", effective_width("time", self.time.width))]
-        cells += [
-            (column.name, effective_width(column.name, column.width))
-            for column in self.columns
-        ]
+        cells = [("time", self.time.width)]
+        cells += [(column.name, column.width) for column in self.columns]
         return self.join_row(cells, is_header=True)
 
     def format_row(self, now_monotonic: float, now_wall: datetime) -> str:
         stamp = format_timestamp(now_wall, self.time.format)
-        cells = [(stamp, effective_width("time", self.time.width))]
+        cells = [(stamp, self.time.width)]
         for column in self.columns:
             value = column.sample(now_monotonic)
-            width = effective_width(column.name, column.width)
-            cells.append(("" if value is None else value, width))
+            cells.append(("" if value is None else value, column.width))
         return self.join_row(cells, is_header=False)
 
     def join_row(
@@ -91,13 +87,14 @@ def join_csv(cells: list[tuple[str, int | None]]) -> str:
 def join_human(cells: list[tuple[str, int | None]], is_header: bool) -> str:
     # The comma binds to the value it follows and padding comes after it, so
     # columns line up in the terminal; a single space always follows the
-    # comma. Values are cut to the column width so a long value cannot push a
-    # row's later cells right of the header; headers are never cut.
+    # comma. Both are cut to the column width so nothing pushes a row's later
+    # cells right of the header. A data value keeps its head (`…` at the end);
+    # a header keeps its tail (`…` at the front) since the distinguishing part
+    # of a name — e.g. the topic in `cpu_nav2` — is usually the end.
     parts = []
     last_index = len(cells) - 1
     for index, (text, width) in enumerate(cells):
-        if not is_header:
-            text = truncate(text, width)
+        text = truncate_tail(text, width) if is_header else truncate(text, width)
         if index < last_index:
             text = f"{text}, "
             width = None if width is None else width + 2
@@ -111,13 +108,10 @@ def truncate(text: str, width: int | None) -> str:
     return text[: width - 1] + "…"
 
 
-def effective_width(name: str, width: int | None) -> int | None:
-    # A header longer than its column's width overflows and pushes that row's
-    # later cells right of the data rows; widen the column to fit the header
-    # so header and rows always line up. None keeps the no-padding semantics.
-    if width is None:
-        return None
-    return max(width, len(name))
+def truncate_tail(text: str, width: int | None) -> str:
+    if width is None or len(text) <= width:
+        return text
+    return "…" + text[-(width - 1):]
 
 
 def quote_cell(text: str) -> str:
