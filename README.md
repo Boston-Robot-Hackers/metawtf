@@ -103,16 +103,39 @@ Reports the latest value of a message field, sampled at each tick.
 | Key           | Required | Type   | Default                          | Rules                                             |
 |---------------|----------|--------|----------------------------------|---------------------------------------------------|
 | `topic`       | yes      | string | —                                | positional (or `topic=`); the topic to subscribe to |
-| `field`       | yes      | string | —                                | dotted attribute path, e.g. `pose.pose.position.x`; no array indexing |
-| `name`        | no       | string | sanitized topic                  | the CSV column header                             |
+| `field`       | yes      | string / list | —                          | dotted attribute path, e.g. `pose.pose.position.x` (no array indexing); a comma list makes one column per path from one subscription |
+| `name`        | no       | string / list | sanitized topic            | column header; with a multi-field or `subfields` echo it is a comma list, one header per column (count must match) |
 | `type`        | no       | string | resolved from the graph          | e.g. `nav_msgs/msg/Odometry`; needed only if the topic isn't up at start or is multi-type |
 | `stale_after` | no       | number | never stale                      | must be > 0; blank the cell if no message arrives within this many seconds |
-| `width`       | no       | int    | `8`                              | must be > 0; pads the cell to a minimum width     |
+| `width`       | no       | int / list | `8`                          | must be > 0; with a multi-field or `subfields` echo a comma list, one width per column (`4,10,6`) |
 | `json`        | no       | bool   | `false`                          | `json=true` parses the extracted field as a JSON string before selecting |
 | `subfields`   | no       | list   | all top-level keys               | comma-separated; requires `json=true`; dotted keys reach nested objects (`payload.count`) |
 
 A bad `field` path (e.g. a typo) does not crash the trace: that cell shows `?`
 until a readable message arrives.
+
+#### Multiple fields (`field=` comma list)
+
+One `echo` line can pull several message fields at once — give `field=` a comma
+list. Handy for a `Twist` on `/cmd_vel` where you want `linear.x` and
+`angular.z` side by side:
+
+```
+echo /cmd_vel field=linear.x,angular.z width=6,6
+```
+
+This makes one subscription and one column per path, auto-named
+`<sanitized topic>_<path with dots as underscores>` (`cmd_vel_linear_x`). For
+custom headers give `name=` a matching comma list:
+
+```
+echo /cmd_vel field=linear.x,angular.z name=vx,wz width=6,6
+```
+
+A single-field echo keeps its legacy single-column behavior: `name=` is one
+string, defaulting to the sanitized topic. A multi-field `field=` cannot combine
+with `json`/`subfields`, which split one JSON string field rather than several
+message fields.
 
 #### JSON subfields (`json=true`)
 
@@ -122,8 +145,8 @@ Some topics carry structured data as a JSON string inside a single field
 line expands into one plottable column per selected key:
 
 - Column names are `<sanitized topic>_<key with dots as underscores>`
-  (`explore_status_reached`). An explicit `name` is allowed only when
-  `subfields` selects a single key; with several keys it is a config error.
+  (`explore_status_reached`), or override them with a `name=` comma list of one
+  header per selected key (count must match).
 - Omitting `subfields` expands to all top-level keys of the **first parsed
   message**, in order; the column set is then fixed (later extra keys are
   ignored, missing keys show `?`).

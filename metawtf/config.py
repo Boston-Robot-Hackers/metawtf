@@ -26,7 +26,6 @@ ECHO_KEYS = {
     "name", "topic", "type", "field", "stale_after", "width",
     "json", "subfields",
 }
-ECHO_REQUIRED_KEYS = {"topic", "field"}
 HZ_KEYS = {"topic", "match", "window", "name", "width"}
 PROC_CPU_KEYS = {"name", "process", "width"}
 SYS_CPU_KEYS = {"name", "mode", "width"}
@@ -41,7 +40,7 @@ class ConfigError(Exception):
 class EchoColumn:
     name: str
     topic: str
-    field: str
+    field: str | None
     type: str | None = None
     stale_after: float | None = None
     width: int | None = None
@@ -49,6 +48,9 @@ class EchoColumn:
     subfields: list[str] | None = None
     subfield_names: list[str] | None = None
     subfield_widths: list[int] | None = None
+    fields: list[str] | None = None
+    field_names: list[str] | None = None
+    field_widths: list[int] | None = None
 
 
 @dataclass
@@ -228,57 +230,69 @@ def parse_column(
 
 def parse_echo_column(options: dict) -> EchoColumn:
     reject_unknown_keys(options, ECHO_KEYS, "echo")
-    missing_keys = ECHO_REQUIRED_KEYS - set(options)
-    if missing_keys:
-        raise ConfigError(f"echo column missing key(s): {sorted(missing_keys)}")
-    topic = options["topic"]
-    field = options["field"]
-    column_type = options.get("type")
-    stale_after = parse_float_option(options, "stale_after")
+    topic = require_key(options, "topic")
     is_json = parse_bool(options.get("json", "false"), "json")
-    subfields = parse_subfields(options.get("subfields"))
-    name = resolve_echo_name(options, topic, is_json, subfields)
-    width, subfield_widths = resolve_echo_widths(options, subfields)
+    subfields = parse_key_list(options.get("subfields"), "subfields")
+    paths = parse_key_list(require_key(options, "field"), "field")
+    names = parse_key_list(options.get("name"), "name")
+    validate_echo_column(paths, names, is_json, subfields)
+    # A `subfields` echo fans out on JSON keys; a multi-path `field` fans out on
+    # message fields. Either way the column set is `keys`; a lone path with no
+    # subfields is the plain single-column echo.
+    keys = subfields if subfields is not None else paths
+    is_multi = subfields is not None or len(paths) > 1
+    prefix = sanitize_topic(topic)
     return EchoColumn(
-        name=name,
+        name=names[0] if (names and not is_multi) else prefix,
         topic=topic,
-        field=field,
-        type=column_type,
-        stale_after=stale_after,
-        width=width,
+        field=None if (is_multi and subfields is None) else paths[0],
+        type=options.get("type"),
+        stale_after=parse_float_option(options, "stale_after"),
+        width=None if is_multi else parse_width(
+            options.get("width"), DEFAULT_ECHO_WIDTH
+        ),
         is_json=is_json,
         subfields=subfields,
-        subfield_names=resolve_subfield_names(options, name, subfields),
-        subfield_widths=subfield_widths,
+        subfield_names=resolve_multi_names(names, prefix, subfields),
+        subfield_widths=echo_widths(options, subfields),
+        fields=paths if (is_multi and subfields is None) else None,
+        field_names=resolve_multi_names(
+            names, prefix, paths if (is_multi and subfields is None) else None
+        ),
+        field_widths=echo_widths(
+            options, paths if (is_multi and subfields is None) else None
+        ),
     )
 
 
-def resolve_echo_widths(
-    options: dict, subfields: list[str] | None
-) -> tuple[int | None, list[int] | None]:
-    # Subfield columns render one cell each, so 'width' becomes a comma list
-    # with one number per subfield; the single-column form keeps a lone width.
-    if subfields is None:
-        return parse_width(options.get("width"), DEFAULT_ECHO_WIDTH), None
-    return None, parse_width_list(options.get("width"), len(subfields))
-
-
-def resolve_echo_name(options, topic, is_json, subfields) -> str:
+def validate_echo_column(paths, names, is_json, subfields) -> None:
     if subfields is not None and not is_json:
         raise ConfigError("'subfields' requires 'json=true'")
-    if subfields is not None and len(subfields) > 1 and "name" in options:
-        raise ConfigError("'name' is not allowed with more than one subfield")
-    return options.get("name") or sanitize_topic(topic)
+    if len(paths) > 1 and (is_json or subfields is not None):
+        raise ConfigError("'json'/'subfields' require a single 'field'")
+    keys = subfields if subfields is not None else paths
+    if names is not None and len(names) != len(keys):
+        raise ConfigError(
+            f"'name' must have {len(keys)} comma-separated value(s),"
+            f" one per column, got {len(names)}"
+        )
 
 
-def resolve_subfield_names(options, name, subfields) -> list[str] | None:
-    if subfields is None:
+def echo_widths(options: dict, keys: list[str] | None) -> list[int] | None:
+    # Multi-column echoes render one cell each, so `width` is a comma list with
+    # one number per column; the single-column form keeps a lone width.
+    if keys is None:
         return None
-    # An explicit name on a single-subfield selection is the column header
-    # itself; otherwise headers are <base>_<key with dots as underscores>.
-    if len(subfields) == 1 and "name" in options:
-        return [name]
-    return [subfield_name(name, key) for key in subfields]
+    return parse_width_list(options.get("width"), len(keys))
+
+
+def resolve_multi_names(names, prefix, keys) -> list[str] | None:
+    if keys is None:
+        return None
+    if names is not None:
+        return names  # count already validated
+    # Auto headers are <sanitized topic>_<key with dots as underscores>.
+    return [subfield_name(prefix, key) for key in keys]
 
 
 def subfield_name(prefix: str, key: str) -> str:
@@ -372,8 +386,8 @@ def parse_width_list(value: str | None, count: int) -> list[int]:
     parts = value.split(",")
     if len(parts) != count:
         raise ConfigError(
-            f"'width' must have {count} comma-separated value(s) to match"
-            f" 'subfields', got {len(parts)}"
+            f"'width' must have {count} comma-separated value(s), one per"
+            f" column, got {len(parts)}"
         )
     return [parse_positive_int(part, "width") for part in parts]
 
@@ -384,13 +398,13 @@ def parse_bool(value: str, key: str) -> bool:
     return value == "true"
 
 
-def parse_subfields(value: str | None) -> list[str] | None:
+def parse_key_list(value: str | None, key: str) -> list[str] | None:
     if value is None:
         return None
-    subfields = value.split(",")
-    if any(not item for item in subfields):
-        raise ConfigError(f"'subfields' must be non-empty keys, got {value!r}")
-    return subfields
+    keys = value.split(",")
+    if any(not item for item in keys):
+        raise ConfigError(f"'{key}' must be non-empty keys, got {value!r}")
+    return keys
 
 
 def compile_regex(pattern: str, key: str) -> re.Pattern:

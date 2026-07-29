@@ -130,6 +130,29 @@ def test_json_subfields_fan_out_from_one_subscription():
     assert manager.states[1].value == 1
 
 
+def test_fields_fan_out_from_one_subscription():
+    node = FakeNode([("/cmd_vel", ["geometry_msgs/msg/Twist"])])
+    column = EchoColumn(
+        name="cmd_vel",
+        topic="/cmd_vel",
+        field=None,
+        fields=["linear.x", "angular.z"],
+        field_names=["cmd_vel_linear_x", "cmd_vel_angular_z"],
+        field_widths=[8, 8],
+    )
+    manager = ColumnManager(node, Config(sample_hz=5.0, columns=[column]))
+    manager.scan()
+    assert node.subscriptions_made == [("/cmd_vel", False)]
+    assert [state.name for state in manager.states] == [
+        "cmd_vel_linear_x", "cmd_vel_angular_z",
+    ]
+    linear = SimpleNamespace(x=1.5)
+    angular = SimpleNamespace(z=0.3)
+    node.callbacks["/cmd_vel"](SimpleNamespace(linear=linear, angular=angular))
+    assert manager.states[0].value == 1.5
+    assert manager.states[1].value == 0.3
+
+
 def test_json_without_subfields_expands_on_first_message():
     node = FakeNode([("/chatter", ["std_msgs/msg/String"])])
     manager = ColumnManager(node, json_config(None, None))

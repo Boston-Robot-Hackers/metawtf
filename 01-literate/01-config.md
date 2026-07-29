@@ -1,5 +1,5 @@
 ---
-version: "1.6"
+version: "1.9"
 generated: "2026-07-29"
 ---
 
@@ -111,6 +111,9 @@ class EchoColumn:
     subfields: list[str] | None = None
     subfield_names: list[str] | None = None
     subfield_widths: list[int] | None = None
+    fields: list[str] | None = None
+    field_names: list[str] | None = None
+    field_widths: list[int] | None = None
 
 @dataclass
 class HzColumn:
@@ -290,47 +293,60 @@ present or both absent fail the same test. A `match` column also forbids a
 hand-set `name`, because its names come from the topics the regex discovers at
 runtime — a fixed name would be wrong for every column it spawns.
 
-The echo parser carries the richest rule set. Beyond requiring `topic` and
-`field`, it enforces the JSON feature's coupling: `subfields` requires
-`json=true`, and an explicit `name` is only allowed when it can unambiguously
-name *one* column:
+The echo parser carries the richest rule set, and its central design choice is
+that **`field=` is always a comma list**. One path is the plain single-column
+echo; several paths fan out into one column per path, all from one
+subscription. There is no separate plural keyword — `parse_key_list` splits
+`field=` the same way it splits `subfields=`, so the same list machinery drives
+both. A third shape, a JSON string field split by `subfields=`, reuses the same
+fan-out with `JsonEchoColumnState` recipients instead. `validate_echo_column`
+holds the coupling rules — `subfields` needs `json=true`, and neither the JSON
+parse nor `subfields` makes sense over more than one message field — plus the
+one naming rule: an optional `name=` list must have exactly one header per
+column:
 
 ```python
-def resolve_echo_name(options, topic, is_json, subfields) -> str:
+def validate_echo_column(paths, names, is_json, subfields) -> None:
     if subfields is not None and not is_json:
         raise ConfigError("'subfields' requires 'json=true'")
-    if subfields is not None and len(subfields) > 1 and "name" in options:
-        raise ConfigError("'name' is not allowed with more than one subfield")
-    return options.get("name") or sanitize_topic(topic)
+    if len(paths) > 1 and (is_json or subfields is not None):
+        raise ConfigError("'json'/'subfields' require a single 'field'")
+    keys = subfields if subfields is not None else paths
+    if names is not None and len(names) != len(keys):
+        raise ConfigError(
+            f"'name' must have {len(keys)} comma-separated value(s),"
+            f" one per column, got {len(names)}"
+        )
 ```
 
-The per-key headers (`explore_status_reached`) are computed here, at parse
-time, and travel in `EchoColumn.subfield_names` via
-`subfield_name(prefix, key)`, which turns dotted keys into underscores. The
-alternative — the column manager deriving names when it fans out states —
-would split naming policy across two modules; keeping it beside
-`sanitize_topic` means every header rule lives on one page. (`json=true` with
-no `subfields` leaves `subfield_names` as `None`: those columns can't be named
-until the first message reveals the keys, so the manager derives them at
-runtime.)
+The per-column headers (`explore_status_reached`, `cmd_vel_linear_x`) are
+computed at parse time by `resolve_multi_names` — shared by the multi-field and
+subfields forms. A `name=` comma list overrides them with one custom header per
+column; otherwise it falls back to `subfield_name(prefix, key)`, which turns
+dotted keys into underscores. Keeping this beside `sanitize_topic` means every
+header rule lives on one page rather than being split between config and the
+column manager. (A single-field echo keeps its legacy behavior: `name=` is one
+string defaulting to the sanitized topic. And `json=true` with no `subfields`
+leaves the headers unknown until the first message reveals the keys, so the
+manager derives them at runtime.)
 
-Because each explicit subfield renders as its own cell, `width=` on such a
-column is not a single number but a comma list — one width per subfield —
-resolved by `resolve_echo_widths`:
+Because each fanned-out column renders as its own cell, `width=` on a
+multi-field or `subfields` echo is likewise a comma list — one width per column
+— resolved by `echo_widths`:
 
 ```python
-def resolve_echo_widths(options, subfields):
-    if subfields is None:
-        return parse_width(options.get("width"), DEFAULT_ECHO_WIDTH), None
-    return None, parse_width_list(options.get("width"), len(subfields))
+def echo_widths(options, keys):
+    if keys is None:
+        return None
+    return parse_width_list(options.get("width"), len(keys))
 ```
 
-`parse_width_list` rejects a count mismatch (`width=4,10` against three
-subfields is an error, not a silently padded default) and falls back to
+`parse_width_list` rejects a count mismatch (`width=4,10` against three columns
+is an error, not a silently padded default) and falls back to
 `DEFAULT_ECHO_WIDTH` per column when `width` is omitted. The single-column
-forms — plain echo, hz, cpu — keep the lone-integer `width`; only the fanned-out
-subfield case carries `EchoColumn.subfield_widths`, which the column manager
-zips one-to-one with the states it creates.
+forms — plain echo, hz, cpu — keep the lone-integer `width`; the fanned-out
+cases carry `EchoColumn.subfield_widths` or `field_widths`, which the column
+manager zips one-to-one with the states it creates.
 
 ## Naming and small coercions
 
@@ -346,7 +362,7 @@ header, still traceable to its source. Echo, single-topic hz, and
 match-discovered hz columns all share this rule, so a header is unambiguous no
 matter which metric produced it.
 
-The leaf coercers (`parse_float`, `parse_width`, `parse_bool`, `parse_subfields`,
+The leaf coercers (`parse_float`, `parse_width`, `parse_bool`, `parse_key_list`,
 `compile_regex`) each validate exactly one value and raise a `ConfigError`
 with the offending token embedded. None of them guess-and-repair: a string
 `"fast"` for `sample_hz` is not silently defaulted; it is rejected. Booleans

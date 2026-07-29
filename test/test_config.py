@@ -259,6 +259,60 @@ def test_non_integer_subfield_width_raises():
         load("echo /s field=data json=true subfields=a,b width=4,x\n")
 
 
+def test_multi_field_parses_into_columns():
+    config = load("echo /cmd_vel field=linear.x,angular.z\n")
+    column = config.columns[0]
+    assert column.fields == ["linear.x", "angular.z"]
+    assert column.field is None
+    assert column.field_names == ["cmd_vel_linear_x", "cmd_vel_angular_z"]
+    assert column.field_widths == [8, 8]
+
+
+def test_single_field_stays_single_column():
+    config = load("echo /cmd_vel field=linear.x name=vx\n")
+    column = config.columns[0]
+    assert column.field == "linear.x"
+    assert column.fields is None
+    assert column.name == "vx"
+
+
+def test_multi_field_per_field_widths():
+    config = load("echo /cmd_vel field=linear.x,angular.z width=4,10\n")
+    assert config.columns[0].field_widths == [4, 10]
+
+
+def test_missing_field_raises():
+    with pytest.raises(ConfigError, match="field"):
+        load("echo /cmd_vel\n")
+
+
+def test_multi_field_with_json_raises():
+    with pytest.raises(ConfigError, match="single 'field'"):
+        load("echo /s field=a,b json=true\n")
+
+
+def test_multi_field_name_count_mismatch_raises():
+    with pytest.raises(ConfigError, match="'name'"):
+        load("echo /cmd_vel field=linear.x,angular.z name=foo\n")
+
+
+def test_multi_field_width_count_mismatch_raises():
+    with pytest.raises(ConfigError, match="comma-separated"):
+        load("echo /cmd_vel field=linear.x,angular.z width=4\n")
+
+
+def test_multi_field_custom_names():
+    config = load("echo /cmd_vel field=linear.x,angular.z name=vx,wz\n")
+    assert config.columns[0].field_names == ["vx", "wz"]
+
+
+def test_subfields_custom_names():
+    config = load(
+        "echo /s field=data json=true subfields=a,b name=aa,bb\n"
+    )
+    assert config.columns[0].subfield_names == ["aa", "bb"]
+
+
 def test_empty_subfields_value_raises():
     with pytest.raises(ConfigError):
         load("echo /s field=data json=true subfields=\n")

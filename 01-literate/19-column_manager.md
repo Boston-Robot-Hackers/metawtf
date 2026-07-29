@@ -1,6 +1,6 @@
 ---
-version: "1.3"
-generated: "2026-07-24"
+version: "1.4"
+generated: "2026-07-29"
 ---
 
 # Column manager: one place that owns columns and subscriptions
@@ -112,6 +112,9 @@ topic?* and *is the column set fixed?*:
   sample time, so they need no subscription and no graph scanning.
 - **Plain hz and plain echo** register one fixed `Subscription` immediately;
   it subscribes once the topic exists.
+- **Echo with a multi-path `field:`** (comma list) fans out at config time: one
+  `EchoColumnState` per message field path, all sharing one subscription. Names
+  and per-column widths were already computed by `config.py`.
 - **Echo with `subfields:`** fans out at config time: one
   `JsonEchoColumnState` per key, all sharing one subscription. The column
   names were already computed by `config.py`, keeping naming policy in one

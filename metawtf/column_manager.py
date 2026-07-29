@@ -91,7 +91,15 @@ class ColumnManager:
             self.register([state], column.topic, None, raw=True)
 
     def add_echo_column(self, column: EchoColumn) -> None:
-        if column.subfields is not None:
+        if column.fields is not None:
+            states = [
+                EchoColumnState(name, path, column.stale_after, width)
+                for name, path, width in zip(
+                    column.field_names, column.fields, column.field_widths
+                )
+            ]
+            self.register(states, column.topic, column.type, raw=False)
+        elif column.subfields is not None:
             states = [
                 JsonEchoColumnState(
                     name, column.field, key, column.stale_after, width,

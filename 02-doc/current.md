@@ -6,6 +6,23 @@
 Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). Full suite:
 **223 passed** via `uv run pytest` (base `python3` lacks numpy; use `uv run`).
 
+**F10 (multi-field echo): code + unit tests DONE, live demo pending** —
+`echo TOPIC field=linear.x,angular.z` makes one column per message field path
+from a single subscription (parallel to `subfields=` but for real fields, not
+JSON keys). **Singular keywords only** — `field=`/`name=` accept comma lists;
+no `fields`/`names` keyword. Single-path `field=` keeps the plain single-column
+echo (name= one string, default sanitized topic); multi-path fans out. Multi
+cannot combine with `json`/`subfields`. `width=`/`name=` are comma lists on a
+multi echo (count must match); headers auto `<topic>_<path>`.
+`EchoColumn.fields`/`field_names`/`field_widths` (internal) carry the fan-out;
+`validate_echo_column`, `echo_widths`, `resolve_multi_names(names, prefix, keys)`
+in config.py; `column_manager.add_echo_column` fans out `EchoColumnState` list.
+`parse_subfields`→generic `parse_key_list`. Docs: conf grammar, README,
+literate 01-config + 19-column_manager. Tests in test_config/test_column_manager.
+hz analog considered and rejected (hz has no fields; user confirmed). Uncommitted;
+F10/TF10 still in notdone until live `/cmd_vel` demo. **Rebuild before running:**
+`colcon build --packages-select metawtf && source install/setup.bash`.
+
 **Per-subfield width (chore): DONE** — for a `json` echo column with explicit
 `subfields`, `width=` is now a comma list with one number per subfield
 (`subfields=a,b,c width=4,10,6`); count must match or `ConfigError`. Omitted →
