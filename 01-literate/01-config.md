@@ -1,6 +1,6 @@
 ---
-version: "1.5"
-generated: "2026-07-25"
+version: "1.6"
+generated: "2026-07-29"
 ---
 
 # Config: the line-oriented `metawtf.conf` parser
@@ -110,6 +110,7 @@ class EchoColumn:
     is_json: bool = False
     subfields: list[str] | None = None
     subfield_names: list[str] | None = None
+    subfield_widths: list[int] | None = None
 
 @dataclass
 class HzColumn:
@@ -312,6 +313,24 @@ would split naming policy across two modules; keeping it beside
 no `subfields` leaves `subfield_names` as `None`: those columns can't be named
 until the first message reveals the keys, so the manager derives them at
 runtime.)
+
+Because each explicit subfield renders as its own cell, `width=` on such a
+column is not a single number but a comma list — one width per subfield —
+resolved by `resolve_echo_widths`:
+
+```python
+def resolve_echo_widths(options, subfields):
+    if subfields is None:
+        return parse_width(options.get("width"), DEFAULT_ECHO_WIDTH), None
+    return None, parse_width_list(options.get("width"), len(subfields))
+```
+
+`parse_width_list` rejects a count mismatch (`width=4,10` against three
+subfields is an error, not a silently padded default) and falls back to
+`DEFAULT_ECHO_WIDTH` per column when `width` is omitted. The single-column
+forms — plain echo, hz, cpu — keep the lone-integer `width`; only the fanned-out
+subfield case carries `EchoColumn.subfield_widths`, which the column manager
+zips one-to-one with the states it creates.
 
 ## Naming and small coercions
 

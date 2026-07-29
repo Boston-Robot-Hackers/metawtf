@@ -48,6 +48,7 @@ class EchoColumn:
     is_json: bool = False
     subfields: list[str] | None = None
     subfield_names: list[str] | None = None
+    subfield_widths: list[int] | None = None
 
 
 @dataclass
@@ -237,17 +238,29 @@ def parse_echo_column(options: dict) -> EchoColumn:
     is_json = parse_bool(options.get("json", "false"), "json")
     subfields = parse_subfields(options.get("subfields"))
     name = resolve_echo_name(options, topic, is_json, subfields)
+    width, subfield_widths = resolve_echo_widths(options, subfields)
     return EchoColumn(
         name=name,
         topic=topic,
         field=field,
         type=column_type,
         stale_after=stale_after,
-        width=parse_width(options.get("width"), DEFAULT_ECHO_WIDTH),
+        width=width,
         is_json=is_json,
         subfields=subfields,
         subfield_names=resolve_subfield_names(options, name, subfields),
+        subfield_widths=subfield_widths,
     )
+
+
+def resolve_echo_widths(
+    options: dict, subfields: list[str] | None
+) -> tuple[int | None, list[int] | None]:
+    # Subfield columns render one cell each, so 'width' becomes a comma list
+    # with one number per subfield; the single-column form keeps a lone width.
+    if subfields is None:
+        return parse_width(options.get("width"), DEFAULT_ECHO_WIDTH), None
+    return None, parse_width_list(options.get("width"), len(subfields))
 
 
 def resolve_echo_name(options, topic, is_json, subfields) -> str:
@@ -340,13 +353,29 @@ def parse_float(value: str, key: str, must_be_positive: bool = False) -> float:
 def parse_width(value: str | None, default: int | None = None) -> int | None:
     if value is None:
         return default
+    return parse_positive_int(value, "width")
+
+
+def parse_positive_int(value: str, key: str) -> int:
     try:
-        width = int(value)
+        number = int(value)
     except ValueError:
-        raise ConfigError(f"'width' must be an integer, got {value!r}") from None
-    if width <= 0:
-        raise ConfigError(f"'width' must be > 0, got {value!r}")
-    return width
+        raise ConfigError(f"'{key}' must be an integer, got {value!r}") from None
+    if number <= 0:
+        raise ConfigError(f"'{key}' must be > 0, got {value!r}")
+    return number
+
+
+def parse_width_list(value: str | None, count: int) -> list[int]:
+    if value is None:
+        return [DEFAULT_ECHO_WIDTH] * count
+    parts = value.split(",")
+    if len(parts) != count:
+        raise ConfigError(
+            f"'width' must have {count} comma-separated value(s) to match"
+            f" 'subfields', got {len(parts)}"
+        )
+    return [parse_positive_int(part, "width") for part in parts]
 
 
 def parse_bool(value: str, key: str) -> bool:

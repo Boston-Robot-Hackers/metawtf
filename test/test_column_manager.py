@@ -110,6 +110,7 @@ def json_config(subfields, subfield_names):
         is_json=True,
         subfields=subfields,
         subfield_names=subfield_names,
+        subfield_widths=None if subfields is None else [8] * len(subfields),
     )
     return Config(sample_hz=5.0, columns=[column])
 

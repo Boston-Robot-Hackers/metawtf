@@ -237,6 +237,28 @@ def test_subfield_names_derive_from_topic_and_keys():
     ]
 
 
+def test_subfield_widths_parse_one_per_subfield():
+    config = load(
+        "echo /s field=data json=true subfields=a,b,c width=4,10,6\n"
+    )
+    assert config.columns[0].subfield_widths == [4, 10, 6]
+
+
+def test_subfield_widths_default_when_width_omitted():
+    config = load("echo /s field=data json=true subfields=a,b\n")
+    assert config.columns[0].subfield_widths == [8, 8]
+
+
+def test_subfield_width_count_mismatch_raises():
+    with pytest.raises(ConfigError, match="comma-separated"):
+        load("echo /s field=data json=true subfields=a,b,c width=4,10\n")
+
+
+def test_non_integer_subfield_width_raises():
+    with pytest.raises(ConfigError, match="integer"):
+        load("echo /s field=data json=true subfields=a,b width=4,x\n")
+
+
 def test_empty_subfields_value_raises():
     with pytest.raises(ConfigError):
         load("echo /s field=data json=true subfields=\n")

@@ -94,9 +94,13 @@ class ColumnManager:
         if column.subfields is not None:
             states = [
                 JsonEchoColumnState(
-                    name, column.field, key, column.stale_after, column.width,
+                    name, column.field, key, column.stale_after, width,
                 )
-                for name, key in zip(column.subfield_names, column.subfields)
+                for name, key, width in zip(
+                    column.subfield_names,
+                    column.subfields,
+                    column.subfield_widths,
+                )
             ]
             self.register(states, column.topic, column.type, raw=False)
         elif column.is_json:

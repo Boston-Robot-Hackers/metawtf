@@ -1,10 +1,19 @@
 # Current Status — Session Handoff
 
-**Last updated:** 2026-07-25
+**Last updated:** 2026-07-29
 
 ## State
 Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). Full suite:
-**219 passed** via `python3 -m pytest test/`.
+**223 passed** via `uv run pytest` (base `python3` lacks numpy; use `uv run`).
+
+**Per-subfield width (chore): DONE** — for a `json` echo column with explicit
+`subfields`, `width=` is now a comma list with one number per subfield
+(`subfields=a,b,c width=4,10,6`); count must match or `ConfigError`. Omitted →
+each defaults to `DEFAULT_ECHO_WIDTH` (8). `EchoColumn.subfield_widths`
+(list[int]|None) carries them; `resolve_echo_widths`/`parse_width_list` in
+`config.py`; `column_manager.add_echo_column` zips a width per state. Non-json
+and single-column echo widths unchanged (single int). Tests in
+`test/test_config.py`. Literate 02-config regen pending. Uncommitted.
 
 **F08 (header tail-truncation): DONE and closed** — a column header wider than
 its width is now cut to the width keeping its **tail** (`…` at front, e.g.
