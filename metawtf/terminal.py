@@ -5,10 +5,24 @@ Author: Pito Salas and Claude Code
 Open Source Under MIT license
 """
 
+import re
 import shutil
 import sys
 
 CSI = "\033["
+
+# ANSI SGR (Select Graphic Rendition) escape sequences: ESC [ ... m.
+ANSI_SGR_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def visual_length(text: str) -> int:
+    """Return the number of visible columns a string occupies.
+
+    ANSI color/formatting escape sequences have zero width, so they are stripped
+    before measuring.  This keeps terminal wrapping calculations correct even
+    when headers contain colored cells.
+    """
+    return len(ANSI_SGR_RE.sub("", text))
 
 
 class PinnedHeader:
@@ -72,8 +86,17 @@ class PinnedHeader:
 
     def header_rows(self, header: str, columns: int) -> int:
         # A header wider than the terminal wraps; the region must start below
-        # the wrapped rows or the tail of the header scrolls away.
-        return max(1, -(-len(header) // max(1, columns)))
+        # the wrapped rows or the tail of the header scrolls away.  Each physical
+        # line is measured separately so ANSI color codes and multi-line headers
+        # (group header + column header) are counted correctly.
+        lines = header.splitlines()
+        return max(
+            1,
+            sum(
+                -(-visual_length(line) // max(1, columns))
+                for line in lines
+            ),
+        )
 
     def write(self, text: str) -> None:
         self.out.write(text)

@@ -18,6 +18,8 @@ class ProcCpuColumnState:
     tracker against /proc.
     """
 
+    kind = "proc_cpu"
+
     def __init__(
         self,
         name: str,

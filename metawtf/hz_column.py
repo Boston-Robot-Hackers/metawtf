@@ -16,6 +16,8 @@ class HzColumnState:
     arrival time matters, so the payload is ignored.
     """
 
+    kind = "hz"
+
     def __init__(self, name: str, window: float, width: int | None = None):
         self.name = name
         self.width = width

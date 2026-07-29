@@ -54,6 +54,7 @@ class TracerNode(Node):
             self.states,
             config.time,
             human=is_human,
+            color=self.pinned is not None,
             on_header=self.pinned.show if self.pinned is not None else None,
         )
         self.is_paused = False

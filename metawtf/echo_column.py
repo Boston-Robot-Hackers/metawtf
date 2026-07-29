@@ -10,6 +10,8 @@ from metawtf.value_column import INVALID, ValueColumnState
 
 
 class EchoColumnState(ValueColumnState):
+    kind = "echo"
+
     def __init__(
         self,
         name: str,

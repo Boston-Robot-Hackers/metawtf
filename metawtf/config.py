@@ -80,6 +80,7 @@ class SysCpuColumn:
 class TimeColumn:
     format: str | None = None
     width: int | None = None
+    kind: str = "time"
 
 
 @dataclass

@@ -19,6 +19,8 @@ class SysCpuColumnState:
     (busy, idle) pair this column renders.
     """
 
+    kind = "sys_cpu"
+
     def __init__(
         self,
         name: str,

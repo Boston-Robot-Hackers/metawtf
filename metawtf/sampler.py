@@ -19,8 +19,37 @@ from metawtf.config import TimeColumn
 class SampledColumn(Protocol):
     name: str
     width: int | None
+    kind: str
 
     def sample(self, now: float) -> str | None: ...
+
+
+# ANSI foreground colors for each column kind in human mode.
+KIND_COLORS = {
+    "time": "\033[97m",     # bright white
+    "echo": "\033[92m",     # bright green
+    "hz": "\033[93m",       # bright yellow
+    "proc_cpu": "\033[91m", # bright red
+    "sys_cpu": "\033[96m",  # bright cyan
+}
+COLOR_RESET = "\033[0m"
+
+# Labels used in the grouped kind header above the regular header.
+GROUP_LABELS = {
+    "time": "time",
+    "echo": "echo",
+    "hz": "hz",
+    "proc_cpu": "proc",
+    "sys_cpu": "syscpu",
+}
+
+
+def colorize(text: str, kind: str) -> str:
+    """Wrap text in the ANSI color for a column kind, if one is defined."""
+    code = KIND_COLORS.get(kind)
+    if code is None:
+        return text
+    return f"{code}{text}{COLOR_RESET}"
 
 
 class Sampler:
@@ -31,12 +60,14 @@ class Sampler:
         out: TextIO | None = None,
         *,
         human: bool,
+        color: bool = False,
         on_header=None,
     ):
         self.columns = columns
         self.time = time or TimeColumn()
         self.out = out or sys.stdout
         self.human = human
+        self.color = color and human
         # A pinned-header terminal intercepts header prints to redraw the
         # frozen header in place instead of scrolling a new one past.
         self.on_header = on_header
@@ -53,6 +84,8 @@ class Sampler:
 
     def emit_header(self) -> None:
         header = self.format_header()
+        if self.color:
+            header = self.format_group_header() + "\n" + header
         if self.on_header is not None:
             self.on_header(header)
         else:
@@ -71,11 +104,22 @@ class Sampler:
             cells.append(("" if value is None else value, column.width))
         return self.join_row(cells, is_header=False)
 
+    def format_group_header(self) -> str:
+        columns = [self.time] + list(self.columns)
+        return join_group_header(columns)
+
+    def _column_kinds(self) -> list[str]:
+        return ["time"] + [
+            getattr(column, "kind", "unknown") for column in self.columns
+        ]
+
     def join_row(
         self, cells: list[tuple[str, int | None]], is_header: bool
     ) -> str:
         if self.human:
-            return join_human(cells, is_header)
+            return join_human(
+                cells, is_header, self._column_kinds(), color=self.color
+            )
         return join_csv(cells)
 
 
@@ -84,7 +128,12 @@ def join_csv(cells: list[tuple[str, int | None]]) -> str:
     return ",".join(quote_cell(text) for text, _width in cells)
 
 
-def join_human(cells: list[tuple[str, int | None]], is_header: bool) -> str:
+def join_human(
+    cells: list[tuple[str, int | None]],
+    is_header: bool,
+    kinds: list[str] | None = None,
+    color: bool = False,
+) -> str:
     # The comma binds to the value it follows and padding comes after it, so
     # columns line up in the terminal; a single space always follows the
     # comma. Both are cut to the column width so nothing pushes a row's later
@@ -98,8 +147,46 @@ def join_human(cells: list[tuple[str, int | None]], is_header: bool) -> str:
         if index < last_index:
             text = f"{text}, "
             width = None if width is None else width + 2
-        parts.append(pad(text, width))
+        text = pad(text, width)
+        if color and kinds is not None:
+            text = colorize(text, kinds[index])
+        parts.append(text)
     return "".join(parts)
+
+
+def join_group_header(columns: list[SampledColumn]) -> str:
+    """Build the kind-group header that sits above the column-name header.
+
+    Contiguous columns of the same kind are merged into one colored cell whose
+    visual width spans the underlying columns and their internal comma+space
+    separators.  The kind label is centered inside each group and truncated if
+    the group is too narrow.
+    """
+    groups = []
+    i = 0
+    n = len(columns)
+    while i < n:
+        kind = getattr(columns[i], "kind", "unknown")
+        j = i + 1
+        while j < n and getattr(columns[j], "kind", "unknown") == kind:
+            j += 1
+        group_width = 0
+        for k in range(i, j):
+            col = columns[k]
+            base = col.width if col.width is not None else len(col.name)
+            group_width += base
+            if k < n - 1:
+                group_width += 2  # comma + space after every column but the last
+        label = GROUP_LABELS.get(kind, kind)
+        if group_width <= 0:
+            label = ""
+        elif len(label) > group_width:
+            label = label[: group_width - 1] + "…" if group_width > 1 else label[:1]
+        else:
+            label = label.center(group_width)
+        groups.append(colorize(label, kind))
+        i = j
+    return "".join(groups)
 
 
 def truncate(text: str, width: int | None) -> str:

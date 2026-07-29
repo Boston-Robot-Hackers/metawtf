@@ -20,6 +20,8 @@ class JsonEchoColumnState(ValueColumnState):
     `INVALID` sentinel so the cell shows "?" rather than crashing the trace.
     """
 
+    kind = "echo"
+
     def __init__(
         self,
         name: str,
