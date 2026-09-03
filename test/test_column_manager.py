@@ -9,7 +9,14 @@ import re
 from types import SimpleNamespace
 
 from metawtf.column_manager import ColumnManager
-from metawtf.config import Config, EchoColumn, HzColumn, ProcCpuColumn, SysCpuColumn
+from metawtf.config import (
+    Config,
+    EchoColumn,
+    HzColumn,
+    ProcCpuColumn,
+    SysCpuColumn,
+    parse_config,
+)
 
 
 class FakeLogger:
@@ -185,6 +192,27 @@ def test_expander_waits_through_malformed_first_message():
     assert manager.states == []
     node.callbacks["/chatter"](SimpleNamespace(data='{"reached": 3}'))
     assert [state.name for state in manager.states] == ["chatter_reached"]
+
+
+def test_f11_demo_conf_line_fans_out_to_two_named_states():
+    # The message type is irrelevant to the fan-out, which is settled at parse
+    # time; std_msgs keeps the test off an undeclared message dependency.
+    node = FakeNode([("/oak/detections", ["std_msgs/msg/String"])])
+    config = parse_config(
+        "echo /oak/detections"
+        " field=detections.#,detections[0].results[0].hypothesis.score"
+        " name=ntrk,score width=5,6\n"
+    )
+    manager = ColumnManager(node, config)
+    manager.scan()
+    assert node.subscriptions_made == [("/oak/detections", False)]
+    assert [state.name for state in manager.states] == ["ntrk", "score"]
+    hypothesis = SimpleNamespace(hypothesis=SimpleNamespace(score=0.87))
+    node.callbacks["/oak/detections"](
+        SimpleNamespace(detections=[SimpleNamespace(results=[hypothesis])])
+    )
+    assert manager.states[0].value == 1
+    assert manager.states[1].value == 0.87
 
 
 def test_scan_queries_the_graph_once_for_many_pending_columns():

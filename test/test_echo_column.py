@@ -51,3 +51,31 @@ def test_recovers_to_value_after_a_good_message():
     assert state.sample(10.1) == "?"
     state.on_message(SimpleNamespace(data=2.0), now=11.0)
     assert state.sample(11.1) == "2.00"
+
+
+def detections(count: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        detections=[SimpleNamespace(id=float(n)) for n in range(count)]
+    )
+
+
+def test_indexed_path_goes_question_mark_on_an_empty_array():
+    state = EchoColumnState("first", "detections[0].id", None)
+    state.on_message(detections(2), now=10.0)
+    assert state.sample(10.1) == "0.00"
+    state.on_message(detections(0), now=11.0)
+    assert state.sample(11.1) == "?"
+    state.on_message(detections(2), now=12.0)
+    assert state.sample(12.1) == "0.00"
+
+
+def test_length_path_reads_zero_on_an_empty_array():
+    # The asymmetry with the indexed path above is the point: a count must stay
+    # a value across an empty frame, which is why length answers "how many".
+    state = EchoColumnState("ntrk", "detections.#", None)
+    state.on_message(detections(2), now=10.0)
+    assert state.sample(10.1) == "2"
+    state.on_message(detections(0), now=11.0)
+    assert state.sample(11.1) == "0"
+    state.on_message(detections(2), now=12.0)
+    assert state.sample(12.1) == "2"

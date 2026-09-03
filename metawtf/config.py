@@ -297,7 +297,15 @@ def resolve_multi_names(names, prefix, keys) -> list[str] | None:
 
 
 def subfield_name(prefix: str, key: str) -> str:
-    return f"{prefix}_{key.replace('.', '_')}"
+    return f"{prefix}_{sanitize_field_key(key)}"
+
+
+def sanitize_field_key(key: str) -> str:
+    # Auto headers stay [A-Za-z0-9_]: index brackets, a length '#', and a
+    # negative index's '-' all fold onto '_' or a letter rather than surviving
+    # into the header verbatim.
+    key = key.replace(".", "_").replace("[", "_").replace("]", "")
+    return key.replace("#", "n").replace("-", "n")
 
 
 def parse_hz_column(options: dict) -> HzColumn:

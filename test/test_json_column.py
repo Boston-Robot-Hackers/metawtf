@@ -61,3 +61,12 @@ def test_recovers_after_good_message():
     assert state.sample(1.1) == "?"
     state.on_message(msg('{"reached": 5}'), now=2.0)
     assert state.sample(2.1) == "5"
+
+
+def test_indexed_outer_field_works_for_free():
+    # `field` here is the F11 path into the message, not the JSON key -- proof
+    # that json_column needed no change to gain indexing.
+    state = JsonEchoColumnState("count", "frames[0].data", "payload.count", None)
+    outer = SimpleNamespace(frames=[SimpleNamespace(data='{"payload": {"count": 5}}')])
+    state.on_message(outer, now=1.0)
+    assert state.sample(1.1) == "5"

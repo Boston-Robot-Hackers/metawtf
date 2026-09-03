@@ -458,6 +458,34 @@ def test_format_missing_value_raises():
         load("format\necho /odom field=x\n")
 
 
+def test_auto_header_for_indexed_path():
+    config = load("echo /oak/detections field=detections[0].id,header.seq\n")
+    assert config.columns[0].field_names == [
+        "oak_detections_detections_0_id",
+        "oak_detections_header_seq",
+    ]
+
+
+def test_auto_header_for_length_path():
+    config = load("echo /oak/detections field=detections.#,header.seq\n")
+    assert config.columns[0].field_names == [
+        "oak_detections_detections_n",
+        "oak_detections_header_seq",
+    ]
+
+
+def test_auto_header_for_negative_index_path():
+    config = load("echo /oak/detections field=detections[-1].id,header.seq\n")
+    assert config.columns[0].field_names[0] == "oak_detections_detections_n1_id"
+
+
+def test_explicit_name_wins_over_indexed_auto_header():
+    config = load(
+        "echo /oak/detections field=detections.#,detections[0].id name=ntrk,first\n"
+    )
+    assert config.columns[0].field_names == ["ntrk", "first"]
+
+
 def test_format_with_options_raises():
     with pytest.raises(ConfigError, match="no key=value"):
         load("format human width=3\necho /odom field=x\n")

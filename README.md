@@ -103,7 +103,7 @@ Reports the latest value of a message field, sampled at each tick.
 | Key           | Required | Type   | Default                          | Rules                                             |
 |---------------|----------|--------|----------------------------------|---------------------------------------------------|
 | `topic`       | yes      | string | —                                | positional (or `topic=`); the topic to subscribe to |
-| `field`       | yes      | string / list | —                          | dotted attribute path, e.g. `pose.pose.position.x` (no array indexing); a comma list makes one column per path from one subscription |
+| `field`       | yes      | string / list | —                          | dotted attribute path, e.g. `pose.pose.position.x`, each segment optionally indexed (`detections[0].id`, see below); a comma list makes one column per path from one subscription |
 | `name`        | no       | string / list | sanitized topic            | column header; with a multi-field or `subfields` echo it is a comma list, one header per column (count must match) |
 | `type`        | no       | string | resolved from the graph          | e.g. `nav_msgs/msg/Odometry`; needed only if the topic isn't up at start or is multi-type |
 | `stale_after` | no       | number | never stale                      | must be > 0; blank the cell if no message arrives within this many seconds |
@@ -136,6 +136,37 @@ A single-field echo keeps its legacy single-column behavior: `name=` is one
 string, defaulting to the sanitized topic. A multi-field `field=` cannot combine
 with `json`/`subfields`, which split one JSON string field rather than several
 message fields.
+
+#### Array indexing and length (`[N]` and `#`)
+
+A path segment can carry an integer index in brackets to reach into an
+array-valued field, and the final segment can instead be a bare `#` for the
+array's length:
+
+```
+echo /oak/detections field=detections.#,detections[0].id name=ntrk,first width=5,6
+```
+
+- `NAME[N]` — `N` is an integer; negative counts from the end, so `[-1]` is
+  the last element (`detections[-1].id`).
+- `NAME.#` — only legal as the final segment; resolves to `len(value)`
+  (`detections.#`).
+
+A bad index behaves like any other bad `field` path: the cell shows `?`, not a
+crash. That includes the case that reads like a bug and is not — on an empty
+array, `detections[0].id` is `?` (there is no element 0), while
+`detections.#` is `0` (a value). **Length, not indexing, is what answers "how
+many"** — the reason `#` exists at all despite the no-expression-grammar bias
+below.
+
+Auto-derived headers replace `[`, `]`, `#`, and `-` the same way they already
+replace `.` — with `_` (or `n` for `#`/`-`) — so `detections[0].id` auto-names
+`oak_detections_detections_0_id` and `detections.#` auto-names
+`oak_detections_detections_n`. Give `name=` to override, as always.
+
+Only indexing and length are supported — no slices, no wildcards, no
+aggregate functions (`min`/`max`/`sum`), no arithmetic or filters. `#` is only
+legal in the final segment.
 
 #### JSON subfields (`json=true`)
 
@@ -173,8 +204,8 @@ Notes:
   leading `/` and turns remaining `/` into `_` (so `/robot/scan` →
   `robot_scan`). Give two echo columns on the same topic explicit names to tell
   them apart.
-- `field` is an attribute path only; indexing into message arrays is not
-  supported in this version.
+- `field` is an attribute path, each segment optionally indexed (`[N]`) or,
+  as a final segment, `#` for length — see "Array indexing and length" above.
 - A `match` column set can grow at runtime; when a new topic is discovered the
   header is re-emitted before the next row (in csv output a fresh header line
   is printed — a documented CSV caveat; in the pinned human view the header is
