@@ -1,6 +1,7 @@
 # TF09 — Clear the screen when the pinned header first appears (Feature F09)
+**Date Created:** 2026-07-25
 
-## T01 — Clear the screen in PinnedHeader.setup
+## TF09.0 — Clear the screen in PinnedHeader.setup
 **Status**: done
 **Description**: In `metawtf/terminal.py`, `PinnedHeader.setup` emits a
 clear-screen (`CSI 2J`) before homing the cursor and drawing the header, so the

@@ -1,6 +1,7 @@
 # F01 — Config-driven sampled table trace
 
 **Priority**: High
+**Date Created:** 2026-07-16
 **Done:** yes
 **Tasks File Created:** yes
 **Tests Written:** yes

@@ -1,6 +1,7 @@
 # F07 — Human/CSV output formats with pinned header
 
 **Priority**: Medium
+**Date Created:** 2026-07-24
 **Done:** yes
 **Tasks File Created:** yes
 **Tests Written:** yes

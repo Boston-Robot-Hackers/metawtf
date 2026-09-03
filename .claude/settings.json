@@ -7,6 +7,54 @@
       "Bash(git add:*)",
       "Bash(git commit -m ':*)",
       "Bash(git push:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(./credentials.json)",
+      "Read(./**/*.pem)",
+      "Read(./**/id_rsa*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-secrets.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-ruff.sh" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-context.sh" }
+        ]
+      }
+    ]
+  },
+  "autoMode": {
+    "environment": [
+      "### Project: metawtf",
+      "**Purpose**: A ROS2 CLI that samples selected topic fields into time-aligned rows — live pinned-header view on a tty, CSV when piped or redirected.",
+      "**Package manager**: system python3 (ROS2 Jazzy); no uv and no pyproject.toml. The ROS package builds with colcon.",
+      "**Run**: metawtf <conf-file>. The console script is a colcon byproduct: colcon build --packages-select metawtf && source install/setup.bash. Sample config in metawtf/metawtf.conf; grammar in its header.",
+      "**Test**: python3 -m pytest -q from the repo root (232 tests; needs no sourced workspace). Known issue: colcon test collects 0 tests — see chores.",
+      "**Source control**: git@github.com:Boston-Robot-Hackers/metawtf.git (GitHub, Boston-Robot-Hackers)",
+      "**Protected branches**: main"
+    ],
+    "allow": [
+      "$defaults"
     ]
   }
 }

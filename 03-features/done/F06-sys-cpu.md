@@ -1,6 +1,7 @@
 # F06 — System-wide CPU columns (sys_cpu)
 
 **Priority**: Medium
+**Date Created:** 2026-07-24
 **Done:** yes
 **Tasks File Created:** yes
 **Tests Written:** yes

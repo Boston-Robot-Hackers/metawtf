@@ -1,5 +1,6 @@
 # F08 — Truncate long column headers to their tail
 **Priority**: Low
+**Date Created:** 2026-07-25
 **Done:** yes
 **Tasks File Created:** yes
 **Tests Written:** yes

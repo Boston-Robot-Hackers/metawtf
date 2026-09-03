@@ -1,5 +1,6 @@
 # F09 — Clear the screen when the pinned header first appears
 **Priority**: Low
+**Date Created:** 2026-07-25
 **Done:** yes
 **Tasks File Created:** yes
 **Tests Written:** yes

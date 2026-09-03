@@ -1,6 +1,6 @@
 ---
-version: "1.9"
-generated: "2026-07-29"
+version: "1.10"
+generated: "2026-09-03"
 ---
 
 # Config: the line-oriented `metawtf.conf` parser
@@ -361,6 +361,36 @@ def sanitize_topic(topic: str) -> str:
 header, still traceable to its source. Echo, single-topic hz, and
 match-discovered hz columns all share this rule, so a header is unambiguous no
 matter which metric produced it.
+
+### Sanitizing the F11 path characters
+
+F11 (`field_extract.py`) added two new characters to the field-path
+vocabulary: `[`/`]` for an array index, and `#` for a length segment. Left
+alone, `subfield_name`'s dotted-key auto-namer would happily fold those
+characters straight into a header — `detections[0].id` would auto-name
+`oak_detections[0]_id` — which is a valid dictionary key but not a header
+anyone can safely embed in a CSV or paste into a spreadsheet formula.
+
+`sanitize_field_key` widens the folding rule so every auto header stays in
+`[A-Za-z0-9_]`, no matter what the path contains:
+
+```python
+def sanitize_field_key(key: str) -> str:
+    key = key.replace(".", "_").replace("[", "_").replace("]", "")
+    return key.replace("#", "n").replace("-", "n")
+```
+
+The four substitutions run in a fixed order so they compose without
+double-processing: `.` first collapses the path into underscore-joined
+segments (as before F11), then the bracket pair folds `[0]` into a bare `_0`
+(the closing `]` simply vanishes, since the leading `_` from `[` already
+supplies the separator), and finally `#` and a leading `-` on a negative index
+both become the letter `n` — chosen because a bare digit-prefix minus sign is
+not a legal identifier character, but "n" reads naturally as *n*th /
+*n*egative in a header like `detections_n1_id` (the auto header for
+`detections[-1].id`) or `detections_n` (for `detections.#`). `name=` still
+overrides all of this whenever a config author wants a cleaner header than
+the auto-derived one.
 
 The leaf coercers (`parse_float`, `parse_width`, `parse_bool`, `parse_key_list`,
 `compile_regex`) each validate exactly one value and raise a `ConfigError`

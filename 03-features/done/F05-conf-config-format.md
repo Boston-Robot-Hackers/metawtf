@@ -1,6 +1,7 @@
 # F05 — Conf-only config format
 
 **Priority**: High
+**Date Created:** 2026-07-24
 **Done:** yes
 **Tasks File Created:** yes
 **Tests Written:** yes

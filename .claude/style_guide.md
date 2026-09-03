@@ -51,8 +51,40 @@ behavior; if the bad value is ours, fix it at the source.
 
 ## Naming & style
 **MUST**
-- File header: module name, one-line description, `Author: <name>`,
+- File header, in this order: module name and one-line description,
+  `Author: <name>`, `Version: <n>`, `Created: <date>`, `Updated: <date>`,
   `Open Source Under MIT license`.
+
+```python
+#!/usr/bin/env python3
+# ups_status — INA219 UPS driver and voltage-based state-of-charge estimator
+# Author: Pito Salas
+# Version: 3
+# Created: 2026-04-12
+# Updated: 2026-08-29
+# Open Source Under MIT license
+```
+
+**Do not hand-edit `Version`, `Created`, or `Updated`.** The `.githooks/pre-commit`
+hook stamps all three on every staged `.py` and re-stages the file, so a
+hand-written value is overwritten at the next commit anyway. Writing a new file
+without these three lines is fine — the hook inserts them below `Author`.
+
+What the hook guarantees:
+
+- `Version` is a **plain integer starting at 1**, incremented by exactly one per
+  commit that changes the file — not per edit. Several edits before a single
+  commit are one bump. It is *not* semver and carries no API-compatibility
+  meaning.
+- `Created` is written once, on the first commit that stamps the file, and never
+  rewritten after — so it survives renames and moves.
+- `Updated` is the date of the commit that last changed the file.
+- Both dates are absolute ISO `YYYY-MM-DD` — never relative, never a bare year.
+- A commit that does not touch a file leaves that file's header alone.
+- A file with no `Author:` line is skipped with a warning, never guessed at.
+
+`Version` and `Created` are carried forward from the file itself rather than
+derived from `git rev-list`/`git log`, because neither follows renames reliably.
 - No `from __future__ import annotations`.
 - No leading-underscore prefix on any custom identifier.
 - Line length <= 88 unless a longer line is materially clearer.
@@ -95,6 +127,19 @@ not a hard cap.
 - Minimal public API; no god methods, feature envy, or unrelated responsibilities
   in one class.
 - No features not required by the current spec.
+
+## Web assets (CSS / JS / HTML)
+Applies to any project with a UI layer (Streamlit, Flask, Dash, etc.).
+
+**MUST**
+- No inline CSS, JavaScript, or HTML template strings inside Python source
+  files — CSS/JS/HTML live in their own files, loaded at runtime.
+- Load asset files via `Path(__file__).parent / "filename"` and pass the
+  content to the framework.
+
+**SHOULD**
+- One CSS file per module that needs custom styles; shared styles go in a
+  shared asset file.
 
 ## Comments & types
 **MUST**

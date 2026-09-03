@@ -1,6 +1,7 @@
 # F03 — Process CPU columns
 
 **Priority**: Medium
+**Date Created:** 2026-07-17
 **Done:** no
 **Tasks File Created:** yes
 **Tests Written:** yes

@@ -1,6 +1,7 @@
 # F04 — JSON-string fields expanded into subfield columns
 
 **Priority**: Medium
+**Date Created:** 2026-07-22
 **Done:** yes
 **Tasks File Created:** yes
 **Tests Written:** yes

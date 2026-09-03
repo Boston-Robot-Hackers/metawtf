@@ -1,9 +1,10 @@
 # TF02 — Topic rate (hz) by pattern, tasks for Feature F02
+**Date Created:** 2026-07-16
 
 Depends on F01 (config loader, sampler, QoS helper, node scaffold). Tests use
 fake graph / fake clock so they run without a live ROS graph.
 
-## T01 — Schema: hz entries
+## TF02.0 — Schema: hz entries
 **Status**: done — `HzColumn` + `parse_hz_column` in `metawtf/config.py`;
 9 new tests in `test/test_config.py` (all pass). `metric: hz` takes exactly
 one of `topic`/`match` (regex compiled at load), optional `window` (default
@@ -17,7 +18,7 @@ optional with `topic`.
 `topic`+`match` present, neither present, bad regex, `window` too small, `name`
 with `match` → clear errors.
 
-## T02 — Graph topic matcher
+## TF02.1 — Graph topic matcher
 **Status**: done — `metawtf/topic_match.py` (`match_topics`); 4 tests in
 `test/test_topic_match.py`. Regex `search` vs graph names, single-type pairs
 returned, multi-type skipped with a `logging` warning, no match → empty list.
@@ -27,7 +28,7 @@ flattened, multi-type topics skipped with a warning. No match → empty list.
 **Test**: Unit test with an injected fake topic list — regex selects the right
 topics and their types; multi-type skipped; no match → empty.
 
-## T03 — Rolling-window rate counter
+## TF02.2 — Rolling-window rate counter
 **Status**: done — `metawtf/rate_counter.py` (`RateCounter`); 6 tests in
 `test/test_rate_counter.py`. Injectable clock; prunes entries older than
 `window`; span-based `(n-1)/(t_newest-t_oldest)`; n<2 or zero span → None.
@@ -39,11 +40,11 @@ topics and their types; multi-type skipped; no match → empty.
 10 hz; 3 messages in the first 0.2 s already reads 10 hz (not 1.5); a single
 message → None; old entries pruned.
 
-## T04 — Hz column via raw subscription
+## TF02.3 — Hz column via raw subscription
 **Status**: done — `metawtf/hz_column.py` (`HzColumnState`); 4 tests in
 `test/test_hz_column.py`. State records arrivals and formats the rolling rate
 `%.3f`; name derived from topic via `from_topic`. The `raw=True` subscription
-itself is created by the manager (T05) with `raw=sub.raw`.
+itself is created by the manager (TF02.4) with `raw=sub.raw`.
 **Description**: Create subscriptions with `raw=True` and record only the
 arrival time — the serialized payload is never touched. Column name derived
 from the topic (leading `/` stripped, remaining `/` → `_`). `sample()` returns
@@ -51,7 +52,7 @@ the rate formatted `%.3f`, or None.
 **Test**: Unit test — callback with a fake serialized message records an
 arrival; naming rules; exact format string.
 
-## T05 — Dynamic subscription manager
+## TF02.4 — Dynamic subscription manager
 **Status**: done — `metawtf/column_manager.py` (`ColumnManager`); 5 tests in
 `test/test_column_manager.py` (fake node + fake graph). Handles echo and
 single-topic hz (subscribe once topic appears) and `match` specs (append a
@@ -64,7 +65,7 @@ column with empty cells.
 **Test**: Unit test with a fake graph + fake node — first scan creates N subs;
 second scan with one new topic creates exactly one more; no duplicates.
 
-## T06 — Dynamic columns + header reprint
+## TF02.5 — Dynamic columns + header reprint
 **Status**: done — `metawtf/sampler.py` reprints the header whenever the column
 count changes; test `test_header_reprinted_when_column_added` in
 `test/test_sampler.py`.
@@ -74,11 +75,11 @@ spreadsheet caveat in the sample config.
 **Test**: Unit test — captured stdout shows header, rows, new header with the
 added column, then rows with the extra cell.
 
-## T07 — Feature test suite + demo verification
-**Status**: done — T01–T06 pass together (112 tests green on Jazzy). The live
+## TF02.6 — Feature test suite + demo verification
+**Status**: done — TF02.0–TF02.5 pass together (112 tests green on Jazzy). The live
 tf demo was run by the user on 2026-07-22 and verified: hz rate columns plus a
 reprinted header when a late column appeared.
-**Description**: T01–T06 pass together; sample config with `match: "^/tf"`;
+**Description**: TF02.0–TF02.5 pass together; sample config with `match: "^/tf"`;
 run the demo against a live tf publisher plus a late-starting second tf topic.
 **Test**: `colcon test --packages-select metawtf` green; demo shows rate lines
 and a reprinted header with the new column.
