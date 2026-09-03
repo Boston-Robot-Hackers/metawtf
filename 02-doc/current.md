@@ -12,6 +12,14 @@ per `.claude/settings.json`'s `autoMode.environment` block.)
 
 ## Open
 
+**README.md rewritten 2026-09-03** as an open-source-project README (tagline,
+sample-output preview, comparison against `ros2 topic echo`/`rqt`/Foxglove/
+`ros2 bag`, key features, requirements, quick start, full configuration
+reference, examples, troubleshooting) rather than the old grammar-reference-only
+version. Internals/theory-of-operation are pointed at `01-literate/`, not
+inlined, per the project's own convention that the README stays "how to use
+this," not "how it works inside."
+
 **F11 (array indexing and length in field paths): DONE and closed 2026-09-03.**
 `field_extract.py` gained `NAME[N]` indexing (negative counts from the end)
 and a terminal `NAME.#` length segment; `column_manager.py`, `echo_column.py`,

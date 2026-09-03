@@ -1,33 +1,73 @@
 # metawtf
 
-A minimal ROS2 CLI that samples selected topic fields into a row-per-tick
-stream on stdout. On a terminal you get an aligned, live view with a pinned
-header; piped or redirected you get clean CSV for spreadsheets and graphing.
+**A live, time-aligned dashboard for ROS2 topics** — a config-driven CLI that
+samples the fields you name onto one shared clock and prints one row per
+tick: aligned columns with a pinned header on a terminal, plain CSV when
+piped or redirected.
 
-## How is this different from `ros2 bag`?
+```
+time,    odom_x,   odom_z,   cmd_c,   tf,    cpu_nav2
+12:00:01.200, 1.21,     0.04,     4.98,  9.90,  6.2%
+12:00:01.400, 1.22,     0.05,     5.01,  9.93,  6.4%
+12:00:01.600, 1.24,     0.05,     4.97,  9.88,  6.1%
+```
 
-They overlap only in that both watch topics. `ros2 bag` is a flight recorder:
-it stores *every* raw message on the selected topics, serialized, for later
-replay or offline analysis. High fidelity — but unreadable while recording,
-and turning it into "just `pose.position.x` as a plottable series" takes
-post-processing.
+## Why not `ros2 topic echo`, `rqt`, or `ros2 bag`?
 
-metawtf is a live, deliberately lossy, pre-shaped view:
+A robotics developer juggling `ros2 topic echo` in one terminal, `ros2 topic
+hz` in another, and `top` in a third cannot see a velocity command, a TF
+rate, and a navigator's CPU% line up in time — each tool has its own pace and
+its own window. metawtf merges them onto one shared clock in one place.
 
-- **Time-aligned columns.** Topics publishing at different rates are resampled
-  onto a shared clock, one row per tick, so their values are directly
-  comparable and plottable. A bag keeps each message's own timestamp;
-  alignment is your problem later.
-- **Watchable while it runs.** `ros2 topic echo` legibility with multi-topic
-  breadth — eyeball values live, or redirect the same stream to a file.
-- **Derived values.** `hz` columns compute receive rates; `json: true` reaches
-  inside a JSON string carried in a message field. A bag just stores bytes.
-- **Tiny output, zero post-processing.** Last-known-value sampling at a few Hz
-  produces a CSV a spreadsheet opens directly.
+- **vs. `ros2 topic echo` / `ros2 topic hz` / `top`.** Same data, but combined:
+  one process, one shared sample clock, one row per tick across every topic
+  and process you name — instead of three terminals you have to eyeball at
+  once.
+- **vs. `rqt` / Foxglove.** Both are GUI tools: a display, a windowing
+  toolkit or a browser, and (for Foxglove) usually a bridge or a bag file.
+  metawtf is a single terminal process — it works over a plain SSH session
+  with no display, and its output *is* already a CSV file, not a plot you
+  have to export.
+- **vs. `ros2 bag`.** A bag is a flight recorder: every raw message,
+  serialized, for later replay — high fidelity, but unreadable while
+  recording and requiring post-processing to become "just `pose.position.x`
+  as a series." metawtf is the opposite trade: a live, deliberately lossy,
+  pre-shaped view. Last-known-value sampling at a few Hz produces a CSV a
+  spreadsheet opens directly, with derived columns (`hz` rates, JSON-field
+  extraction, live array length) a bag can't give you without scripting.
 
-Rule of thumb: if you don't yet know which fields you'll need, record a bag —
-metawtf can't recover data it didn't sample. If you know exactly which scalars
-you want to watch or graph *right now*, that's metawtf.
+**Rule of thumb:** if you don't yet know which fields you'll need, record a
+bag — metawtf can't recover data it didn't sample. If you know exactly which
+scalars you want to watch or graph *right now*, that's metawtf.
+
+## Key features
+
+- **Time-aligned columns.** Topics publishing at different rates are
+  resampled onto one shared clock, so their values are directly comparable
+  and plottable row-for-row.
+- **Two output formats, auto-detected.** A terminal gets a pinned, aligned
+  `human` view; a pipe or redirect gets plain RFC-4180 `csv` — no flag
+  needed, though a `format` directive can force either.
+- **Derived columns, not just raw values.** `hz` columns compute receive
+  rates; `json=true` reaches inside a JSON string carried in a message field;
+  array paths support indexing (`detections[0].id`) and length
+  (`detections.#`, `0` on an empty array — a value, not a missing cell).
+- **Host and process CPU columns**, alongside topic data, on the same clock.
+- **Never crashes on bad data.** A missing field, a stale topic, or
+  malformed JSON renders as an empty or `?` cell and recovers on the next
+  good message — never a traceback mid-trace.
+- **No rebuild to change what you're watching.** Edit `metawtf.conf`,
+  re-run; nothing to recompile.
+- **Runs interactively.** `space` pauses/resumes, `h` shows help, `q` (or
+  `Ctrl-C`) quits cleanly, no Enter needed for any of them.
+
+## Requirements
+
+- ROS2 Jazzy (developed and tested there; no Jazzy-only API is used, so
+  other recent distros likely work).
+- Python 3, system install — no `uv`, no `pyproject.toml`.
+- A `rclpy` workspace with `std_msgs` and `rosidl_runtime_py` (standard on
+  any ROS2 install).
 
 ## Installation
 
@@ -37,8 +77,23 @@ colcon build --packages-select metawtf
 source install/setup.bash
 ```
 
-The build installs a `metawtf` command onto your PATH, so no `ros2 run` is
-needed. It stays available in any shell where the workspace is sourced.
+The build installs a `metawtf` command onto your `PATH`, so no `ros2 run` is
+needed — it stays available in any shell where the workspace is sourced.
+
+## Quick start
+
+Get a live view of your node graph's log messages in under a minute:
+
+```bash
+cat > metawtf.conf <<'EOF'
+sample 2
+echo /rosout field=msg width=40
+EOF
+metawtf
+```
+
+You should see a pinned header and one row every half-second, with the most
+recent `/rosout` message text in the `rosout` column. `q` quits.
 
 ## Usage
 
@@ -49,19 +104,17 @@ metawtf -f other.conf    # use a config other than ./metawtf.conf
 metawtf -h               # show help and exit
 ```
 
-On start it reads `metawtf.conf` from the **current working directory** (or the
-file given with `-f`). Edit it and re-run — no rebuild needed.
-(`metawtf/metawtf.conf` in the repo is a sample to copy.)
-
-The output format auto-detects: a terminal gets the `human` format (aligned
-columns, pinned header), a pipe or redirect gets plain `csv`. Override with a
-`format human|csv` directive in the config.
+On start it reads `metawtf.conf` from the **current working directory** (or
+the file given with `-f`). Edit it and re-run — no rebuild needed.
+(`metawtf/metawtf.conf` in the repo is a sample to copy; `conf/metawtf.conf`
+has a fuller one covering every column type.)
 
 **Keys while running** (no Enter needed): `space` pauses/resumes row output,
-`h` shows help, `q` quits (`Ctrl-C` also works). It shuts down cleanly with no
-traceback. When stdin is not a terminal (e.g. piped), only `Ctrl-C` applies.
+`h` shows help, `q` quits (`Ctrl-C` also works). It shuts down cleanly with
+no traceback. When stdin is not a terminal (e.g. piped), only `Ctrl-C`
+applies.
 
-### Configuration reference
+## Configuration reference
 
 One directive per line: `name [positional] key=value ...`. Blank lines and
 lines starting with `#` are ignored (no trailing comments). Values are bare
@@ -74,6 +127,7 @@ time format=%H:%M:%S width=12   # optional leading timestamp column
 
 echo /odom field=pose.pose.position.x name=odom_x stale_after=2.0 width=10
 echo /explore/status field=data json=true subfields=reached,failed
+echo /oak/detections field=detections.#,detections[0].id name=ntrk,first
 hz /cmd_vel window=2.0      # receive rate of one topic
 hz match=^/tf window=2.0    # one rate column per topic matching the regex
 proc_cpu name=cpu_nav2 process=controller_server
@@ -82,183 +136,170 @@ sys_cpu name=cpu_idle mode=idle
 
 #### Top-level directives
 
-| Directive | Required | Meaning                                             |
-|-----------|----------|-----------------------------------------------------|
-| `sample`  | no       | rows per second; positional value must be > 0 (default `5.0`) |
-| `time`    | no       | configures the leading timestamp column; see below  |
-| `format`  | no       | `human` or `csv` (positional); default auto-detects from stdout — `human` on a tty, `csv` when piped |
+| Directive | Required | Meaning |
+|---|---|---|
+| `sample` | no | rows per second; positional value must be > 0 (default `5.0`) |
+| `time` | no | configures the leading timestamp column; see below |
+| `format` | no | `human` or `csv` (positional); default auto-detects from stdout — `human` on a tty, `csv` when piped |
 | column directives | yes, at least one | `echo`, `hz`, `proc_cpu`, `sys_cpu`; one per line |
 
 #### `time` directive (the leading timestamp column)
 
-| Key      | Required | Type   | Default          | Rules                                             |
-|----------|----------|--------|------------------|---------------------------------------------------|
-| `format` | no       | string | `HH:MM:SS.mmm`   | Python `strftime`; the default keeps millisecond precision (which strftime cannot express) |
-| `width`  | no       | int    | natural width    | must be > 0; pads the column to a minimum width   |
+| Key | Required | Type | Default | Rules |
+|---|---|---|---|---|
+| `format` | no | string | `HH:MM:SS.mmm` | Python `strftime`; the default keeps millisecond precision (which strftime cannot express) |
+| `width` | no | int | natural width | must be > 0; pads the column to a minimum width |
 
 #### `echo` column keys
 
 Reports the latest value of a message field, sampled at each tick.
 
-| Key           | Required | Type   | Default                          | Rules                                             |
-|---------------|----------|--------|----------------------------------|---------------------------------------------------|
-| `topic`       | yes      | string | —                                | positional (or `topic=`); the topic to subscribe to |
-| `field`       | yes      | string / list | —                          | dotted attribute path, e.g. `pose.pose.position.x`, each segment optionally indexed (`detections[0].id`, see below); a comma list makes one column per path from one subscription |
-| `name`        | no       | string / list | sanitized topic            | column header; with a multi-field or `subfields` echo it is a comma list, one header per column (count must match) |
-| `type`        | no       | string | resolved from the graph          | e.g. `nav_msgs/msg/Odometry`; needed only if the topic isn't up at start or is multi-type |
-| `stale_after` | no       | number | never stale                      | must be > 0; blank the cell if no message arrives within this many seconds |
-| `width`       | no       | int / list | `8`                          | must be > 0; with a multi-field or `subfields` echo a comma list, one width per column (`4,10,6`) |
-| `json`        | no       | bool   | `false`                          | `json=true` parses the extracted field as a JSON string before selecting |
-| `subfields`   | no       | list   | all top-level keys               | comma-separated; requires `json=true`; dotted keys reach nested objects (`payload.count`) |
+| Key | Required | Type | Default | Rules |
+|---|---|---|---|---|
+| `topic` | yes | string | — | positional (or `topic=`); the topic to subscribe to |
+| `field` | yes | string / list | — | path segments joined by `.`, each optionally indexed (`detections[0].id`) or, as a final segment, `#` for length (`detections.#`) — see below; a comma list makes one column per path from one subscription |
+| `name` | no | string / list | sanitized topic | column header; with a multi-field or `subfields` echo it is a comma list, one header per column (count must match) |
+| `type` | no | string | resolved from the graph | e.g. `nav_msgs/msg/Odometry`; needed only if the topic isn't up at start or is multi-type |
+| `stale_after` | no | number | never stale | must be > 0; blank the cell if no message arrives within this many seconds |
+| `width` | no | int / list | `8` | must be > 0; with a multi-field or `subfields` echo a comma list, one width per column (`4,10,6`) |
+| `json` | no | bool | `false` | `json=true` parses the extracted field as a JSON string before selecting |
+| `subfields` | no | list | all top-level keys | comma-separated; requires `json=true`; dotted keys reach nested objects (`payload.count`) |
 
-A bad `field` path (e.g. a typo) does not crash the trace: that cell shows `?`
-until a readable message arrives.
+A bad `field` path (e.g. a typo) does not crash the trace: that cell shows
+`?` until a readable message arrives.
 
-#### Multiple fields (`field=` comma list)
-
-One `echo` line can pull several message fields at once — give `field=` a comma
-list. Handy for a `Twist` on `/cmd_vel` where you want `linear.x` and
-`angular.z` side by side:
-
-```
-echo /cmd_vel field=linear.x,angular.z width=6,6
-```
-
-This makes one subscription and one column per path, auto-named
-`<sanitized topic>_<path with dots as underscores>` (`cmd_vel_linear_x`). For
-custom headers give `name=` a matching comma list:
+**Multiple fields (`field=` comma list).** One `echo` line can pull several
+message fields at once — give `field=` a comma list. Handy for a `Twist` on
+`/cmd_vel` where you want `linear.x` and `angular.z` side by side:
 
 ```
 echo /cmd_vel field=linear.x,angular.z name=vx,wz width=6,6
 ```
 
-A single-field echo keeps its legacy single-column behavior: `name=` is one
-string, defaulting to the sanitized topic. A multi-field `field=` cannot combine
-with `json`/`subfields`, which split one JSON string field rather than several
+This makes one subscription and one column per path, auto-named
+`<sanitized topic>_<path with dots as underscores>` unless `name=` overrides
+it with a matching comma list. A single-field echo keeps its plain
+single-column behavior. A multi-field `field=` cannot combine with
+`json`/`subfields`, which split one JSON string field rather than several
 message fields.
 
-#### Array indexing and length (`[N]` and `#`)
-
-A path segment can carry an integer index in brackets to reach into an
-array-valued field, and the final segment can instead be a bare `#` for the
-array's length:
+**Array indexing and length (`[N]` and `#`).** A path segment can carry an
+integer index in brackets to reach into an array-valued field, and the final
+segment can instead be a bare `#` for the array's length:
 
 ```
 echo /oak/detections field=detections.#,detections[0].id name=ntrk,first width=5,6
 ```
 
 - `NAME[N]` — `N` is an integer; negative counts from the end, so `[-1]` is
-  the last element (`detections[-1].id`).
-- `NAME.#` — only legal as the final segment; resolves to `len(value)`
-  (`detections.#`).
+  the last element.
+- `NAME.#` — only legal as the final segment; resolves to `len(value)`.
 
-A bad index behaves like any other bad `field` path: the cell shows `?`, not a
-crash. That includes the case that reads like a bug and is not — on an empty
-array, `detections[0].id` is `?` (there is no element 0), while
+A bad index behaves like any other bad `field` path: the cell shows `?`, not
+a crash. That includes the case that reads like a bug and is not — on an
+empty array, `detections[0].id` is `?` (there is no element 0), while
 `detections.#` is `0` (a value). **Length, not indexing, is what answers "how
-many"** — the reason `#` exists at all despite the no-expression-grammar bias
-below.
+many."** Only indexing and length are supported: no slices, no wildcards, no
+aggregate functions, no arithmetic. Auto-derived headers fold `[`, `]`, `#`,
+and `-` the same way they already fold `.` — into `_` (or `n` for `#`/`-`).
 
-Auto-derived headers replace `[`, `]`, `#`, and `-` the same way they already
-replace `.` — with `_` (or `n` for `#`/`-`) — so `detections[0].id` auto-names
-`oak_detections_detections_0_id` and `detections.#` auto-names
-`oak_detections_detections_n`. Give `name=` to override, as always.
+**JSON subfields (`json=true`).** Some topics carry structured data as a JSON
+string inside a single field (e.g. a `std_msgs/msg/String` whose `data` is
+`{"state": "idle", "reached": 0}`). With `json=true`, one config line expands
+into one plottable column per selected key:
 
-Only indexing and length are supported — no slices, no wildcards, no
-aggregate functions (`min`/`max`/`sum`), no arithmetic or filters. `#` is only
-legal in the final segment.
-
-#### JSON subfields (`json=true`)
-
-Some topics carry structured data as a JSON string inside a single field
-(e.g. `/explore/status`, a `std_msgs/msg/String` whose `data` is
-`{"state": "idle", "reached": 0, "failed": 0}`). With `json=true`, one config
-line expands into one plottable column per selected key:
-
-- Column names are `<sanitized topic>_<key with dots as underscores>`
-  (`explore_status_reached`), or override them with a `name=` comma list of one
-  header per selected key (count must match).
+- Column names are `<sanitized topic>_<key>`, or a `name=` comma list
+  overrides them one-for-one.
 - Omitting `subfields` expands to all top-level keys of the **first parsed
-  message**, in order; the column set is then fixed (later extra keys are
-  ignored, missing keys show `?`).
-- Malformed JSON, a missing key, or a key resolving to an object/array/null
-  shows `?` in that cell — never a crash — and recovers on the next
-  well-formed message. Only scalars (string/number/bool) are rendered.
+  message**, in order; the column set is then fixed.
+- Malformed JSON, a missing key, or a non-scalar key shows `?` and recovers
+  on the next well-formed message. Only scalars (string/number/bool) render.
 - `json` is valid only on `echo` columns.
 
 #### `hz` column keys
 
-Reports the rolling message receive rate (`ros2 topic hz`-style span estimate),
-formatted with 2 decimals. Give exactly one of `topic` or `match`.
+Reports the rolling message receive rate (`ros2 topic hz`-style span
+estimate), formatted with 2 decimals. Give exactly one of `topic` or `match`.
 
-| Key      | Required | Type   | Default            | Rules                                             |
-|----------|----------|--------|--------------------|---------------------------------------------------|
-| `topic`  | one-of   | string | —                  | positional (or `topic=`); a single topic; column name defaults to the sanitized topic |
-| `match`  | one-of   | string | —                  | regex over graph topic names; one column per matched topic, added live as topics appear |
-| `window` | no       | number | `2.0`              | rolling window in seconds; must be >= the sample period |
-| `name`   | no       | string | sanitized topic    | allowed with `topic`; **forbidden** with `match`   |
-| `width`  | no       | int    | `6`                | must be > 0; pads the cell to a minimum width      |
+| Key | Required | Type | Default | Rules |
+|---|---|---|---|---|
+| `topic` | one-of | string | — | positional (or `topic=`); a single topic; column name defaults to the sanitized topic |
+| `match` | one-of | string | — | regex over graph topic names; one column per matched topic, added live as topics appear |
+| `window` | no | number | `2.0` | rolling window in seconds; must be >= the sample period |
+| `name` | no | string | sanitized topic | allowed with `topic`; **forbidden** with `match` |
+| `width` | no | int | `6` | must be > 0; pads the cell to a minimum width |
 
-Notes:
-- A default `name` (echo or hz, single-topic or per-`match`-topic) strips the
-  leading `/` and turns remaining `/` into `_` (so `/robot/scan` →
-  `robot_scan`). Give two echo columns on the same topic explicit names to tell
-  them apart.
-- `field` is an attribute path, each segment optionally indexed (`[N]`) or,
-  as a final segment, `#` for length — see "Array indexing and length" above.
-- A `match` column set can grow at runtime; when a new topic is discovered the
-  header is re-emitted before the next row (in csv output a fresh header line
-  is printed — a documented CSV caveat; in the pinned human view the header is
-  redrawn in place).
+A `match` column set can grow at runtime: when a new topic is discovered the
+header is re-emitted before the next row (a fresh CSV header line in that
+format; redrawn in place in the pinned human view).
+
+#### `proc_cpu` and `sys_cpu` column keys
+
+CPU usage columns, sampled on the same clock as everything else.
+
+| Key | Required | Type | Default | Rules |
+|---|---|---|---|---|
+| `name` | yes | string | — | column header |
+| `process` | yes (`proc_cpu` only) | regex | — | matched against process cmdlines; usage is summed across matches |
+| `mode` | yes (`sys_cpu` only) | `busy` \| `idle` | — | system-wide CPU percent |
+| `width` | no | int | `6` | must be > 0 |
+
+Both print as `%.1f%%`.
 
 ### Output
 
 Each tick prints the timestamp column plus one value per column. Missing,
 stale, or not-yet-published data produces an **empty cell** — never `0`,
-never a crash. Floats are formatted with **2 decimals**.
+never a crash. Floats are formatted with 2 decimals.
 
 **Human format** (default on a terminal): the header is pinned to the top of
 the screen via an ANSI scroll region, so rows scroll beneath it and the
-header never moves. Cells are padded so columns line up: the comma sits right
-after each value followed by a single space. `width` is a **minimum** column
-width; a value longer than it is truncated with `…` at the end (its head is
-kept) so rows never drift out of alignment. A header wider than the column is
-truncated too, but keeps its **tail** (`…` at the front) so the distinguishing
-suffix of a name like `cpu_nav2` survives; give the column a short `name=` if
-you want the whole header. Columns that omit `width` use the metric's default
-(`8` for echo, `6` for hz and proc_cpu); the time column is unpadded unless
-given an explicit `width`. Quitting (`q` or Ctrl-C) restores the screen and leaves
-the shell prompt below the output.
-
-```
-time, odom_x,   odom_z
-12:00:01.200, 1.21,     0.04
-12:00:01.400, 1.22,     0.05
-```
+header never moves. `width` is a *minimum* column width; a value longer than
+it is truncated with `…` at the end; a header wider than its column is
+truncated too, keeping its *tail* (`…` at the front) so a distinguishing
+suffix like `cpu_nav2`'s `…_nav2` survives. Quitting restores the screen and
+leaves the shell prompt below the output. Rows that scroll off the pinned
+region are **not** kept in the terminal's scrollback — redirect `csv` output
+to a file for a full record.
 
 **CSV format** (default when piped or redirected): pure RFC 4180 — bare
 commas, no padding, full untruncated values; any cell containing a comma,
-quote, or newline is quoted (inner quotes doubled), so string values always
-occupy a single cell. No padding, no escape sequences, no pinned header.
+quote, or newline is quoted (inner quotes doubled). No pinned header, no
+escape sequences.
 
-```
-time,odom_x,odom_z
-12:00:01.200,1.21,0.04
-12:00:01.400,1.22,0.05
-```
+## Examples
 
-Note: rows that scroll off the pinned region are not kept in the terminal's
-scrollback — redirect csv output to a file for a full record.
+- `metawtf/metawtf.conf` — the minimal sample copied by "Quick start" above.
+- `conf/metawtf.conf` — a fuller example touching every column type
+  (multi-field echo, JSON subfields, `hz` by topic and by `match`, `sys_cpu`).
+
+## Troubleshooting
+
+- **No data showing / every cell is empty.** Confirm the topic is actually
+  publishing (`ros2 topic hz <topic>`) and that `field=` matches the message
+  type — a typo shows as a permanently empty cell, not an error, by design.
+- **Edited the code but behavior didn't change.** `colcon build
+  --packages-select metawtf && source install/setup.bash` — the installed
+  console script does not track the source tree automatically.
+- **Rows vanish when I scroll up.** Expected: the pinned header uses an ANSI
+  scroll region, and xterm-style terminals do not add rows scrolled off it to
+  scrollback. Redirect to CSV for a record you can scroll or grep.
+- **A `match=` hz column's header keeps reprinting.** By design — the column
+  set grows as new matching topics appear on the graph, and each growth
+  re-emits the header so CSV output stays parseable per section.
 
 ## Development
-
-Tests run with plain `pytest` (no `colcon test` dependency); source ROS2 first
-so the `rclpy`-dependent tests run rather than skip:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 python3 -m pytest test/ -v
 ```
+
+Tests run with plain `pytest` (no `colcon test` dependency); sourcing ROS2
+first lets the `rclpy`-dependent tests run instead of skipping. For the
+internal architecture and design rationale, see `01-literate/00-overview.md`
+and the numbered chapters alongside it — each module gets its own literate
+walkthrough.
 
 ## License
 
