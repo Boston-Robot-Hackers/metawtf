@@ -71,8 +71,31 @@ scalars you want to watch or graph *right now*, that's metawtf.
 
 ## Installation
 
+If ROS2 is already installed and sourced, one command installs `metawtf` —
+no Python, `colcon`, or ROS2-packaging knowledge required. `cd` into your
+existing colcon workspace root first (the directory containing `src/`, e.g.
+`~/ros2_ws`):
+
 ```bash
 cd ~/ros2_ws
+curl -sSL https://raw.githubusercontent.com/Boston-Robot-Hackers/metawtf/main/install.sh | bash
+```
+
+It clones `metawtf` into `./src` (or `git pull`s it if already there),
+builds it, and prints the one line to source before you can run `metawtf`.
+It errors out if the current directory doesn't look like a colcon workspace
+(no `./src`) rather than creating one. Primarily tested on Ubuntu; on macOS
+or Windows the script still runs the same steps but prints a best-effort
+notice rather than guaranteeing support.
+
+### Manual install
+
+Equivalent to what the script above does, if you'd rather run each step
+yourself:
+
+```bash
+cd ~/ros2_ws
+git clone https://github.com/Boston-Robot-Hackers/metawtf.git src/metawtf
 colcon build --packages-select metawtf
 source install/setup.bash
 ```
