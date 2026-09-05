@@ -10,6 +10,7 @@ from datetime import datetime
 
 from metawtf.config import TimeColumn
 from metawtf.sampler import Sampler
+from metawtf.terminal import ANSI_SGR_RE
 
 
 class FakeColumn:
@@ -218,6 +219,19 @@ def test_csv_value_with_newline_stays_one_cell():
     sampler = Sampler(columns, out=out, human=False)
     sampler.tick(0.0, MIDNIGHT)
     assert '"l1\nl2"' in out.getvalue()
+
+
+def test_color_group_header_with_default_time_column():
+    # Regression: TimeColumn had no `name` attribute, so join_group_header's
+    # `len(col.name)` fallback for an unset width crashed as soon as a real
+    # run enabled --color (default TimeColumn width is None).
+    out = io.StringIO()
+    columns = [FakeColumn("a", "1")]
+    sampler = Sampler(columns, out=out, human=True, color=True)
+    sampler.tick(0.0, MIDNIGHT)
+    lines = [ANSI_SGR_RE.sub("", line) for line in out.getvalue().splitlines()]
+    assert "time" in lines[0]
+    assert lines[1] == "time, a"
 
 
 def test_csv_header_name_with_comma_is_quoted():
