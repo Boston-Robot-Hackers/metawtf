@@ -281,7 +281,7 @@ def test_multi_field_per_field_widths():
     assert config.columns[0].field_widths == [4, 10]
 
 
-def test_missing_field_raises():
+def test_missing_field_raises_with_field_message():
     with pytest.raises(ConfigError, match="field"):
         load("echo /cmd_vel\n")
 

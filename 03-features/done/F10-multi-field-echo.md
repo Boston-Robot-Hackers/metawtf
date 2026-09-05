@@ -1,12 +1,16 @@
 # F10 — multi-field echo columns
 **Priority**: Medium
 **Date Created:** 2026-07-29
-**Done:** no
+**Done:** yes
 **Tasks File Created:** yes
 **Tests Written:** yes
 **Test Passing:** yes
-**Note:** code + unit tests complete (232 pass); live `/cmd_vel` demo pending
-user verification, then move to `done/`.
+**Note:** live `/cmd_vel` demo verified by Pito 2026-09-05: two columns
+`cmd_vel_linear_x` and `cmd_vel_angular_z` tracked correctly from one
+subscription. Full suite not runnable on this machine (no ROS2 install), so
+verified with the ROS2-independent subset: 228 passed, 4 skipped; the 10
+tests requiring `rosidl_runtime_py` (pre-existing dependency since TF01,
+unrelated to F10) are unreachable here.
 **Description**: One `echo` line can name several message field paths with
 a comma list in `field=`, producing one column per path from a single
 subscription. Mirrors `subfields=` but for real message fields, not keys inside

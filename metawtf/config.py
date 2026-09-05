@@ -237,10 +237,6 @@ def parse_echo_column(options: dict) -> EchoColumn:
     paths = parse_key_list(require_key(options, "field"), "field")
     names = parse_key_list(options.get("name"), "name")
     validate_echo_column(paths, names, is_json, subfields)
-    # A `subfields` echo fans out on JSON keys; a multi-path `field` fans out on
-    # message fields. Either way the column set is `keys`; a lone path with no
-    # subfields is the plain single-column echo.
-    keys = subfields if subfields is not None else paths
     is_multi = subfields is not None or len(paths) > 1
     prefix = sanitize_topic(topic)
     return EchoColumn(
