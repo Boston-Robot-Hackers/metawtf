@@ -2,26 +2,6 @@
 
 **Last updated:** 2026-09-05
 
-## Just fixed
-
-A user running the installed package on a real ROS2/colcon workspace hit
-`AttributeError: 'TimeColumn' object has no attribute 'name'` on every
-plain `metawtf` run (crashes on the first tick, in `join_group_header`).
-Root cause: `--color` is on by default whenever stdout is a real terminal
-in human mode (`tracer_node.py`'s `color=self.pinned is not None`), and the
-group-header renderer needed `col.name` as a width fallback — `TimeColumn`
-never had one. This is exactly the README's own quick-start example
-(`metawtf` run directly in a terminal), so it wasn't a corner case. Fixed by
-adding `name: str = "time"` to `TimeColumn` (`config.py`); logged as a chore
-in `04-tasks/chores.md` with regression test
-`test_color_group_header_with_default_time_column` in `test/test_sampler.py`.
-Verified end-to-end (no ROS2 needed for this part): parsed the README's exact
-quick-start config (`sample 2` / `echo /rosout field=msg width=40`) through
-`parse_config` → `Sampler(..., color=True)` — pre-fix reproduced the identical
-`AttributeError` at the identical line; post-fix it prints the grouped color
-header cleanly. Still worth a live confirmation on the reporting user's actual
-ROS2 machine once there's access.
-
 ## State
 
 Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). Full suite:

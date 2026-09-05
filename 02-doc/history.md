@@ -5,6 +5,21 @@ here from `02-doc/current.md` once no longer "current." Newest first.
 
 ## 2026-09-05
 
+**`TimeColumn` crash on `--color` fixed.** A user on a real ROS2/colcon
+workspace hit `AttributeError: 'TimeColumn' object has no attribute 'name'`
+on every plain `metawtf` run — color defaults on whenever stdout is a real
+terminal in human mode (`tracer_node.py`'s `color=self.pinned is not None`),
+and `join_group_header`'s width fallback needed `col.name`, which `TimeColumn`
+never had. This is the exact path the README's own quick-start example takes.
+Fixed by adding `name: str = "time"` to `TimeColumn` (`config.py`); logged as
+a chore in `04-tasks/chores.md` with regression test
+`test_color_group_header_with_default_time_column`
+(`test/test_sampler.py`). Verified end-to-end by parsing the README's exact
+quick-start config through `parse_config` → `Sampler(..., color=True)`:
+pre-fix reproduced the identical traceback, post-fix renders cleanly.
+Committed as `3e632bd`. Not yet reconfirmed on the reporting user's own
+machine.
+
 **F10 (multi-field echo columns): closed.** `echo TOPIC field=a,b,c` fans
 one subscription out into one column per path (parallel to `subfields=` but
 for real message fields, not JSON keys). Already in production use by
