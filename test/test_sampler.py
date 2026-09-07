@@ -6,11 +6,15 @@ Open Source Under MIT license
 """
 
 import io
+import os
 from datetime import datetime
 
-from metawtf.config import TimeColumn
-from metawtf.sampler import Sampler
+from metawtf.config import PercentWidth, TimeColumn
+from metawtf.sampler import Sampler, resolve_width
 from metawtf.terminal import ANSI_SGR_RE
+
+SIZE_80X24 = os.terminal_size((80, 24))
+SIZE_40X24 = os.terminal_size((40, 24))
 
 
 class FakeColumn:
@@ -240,3 +244,83 @@ def test_csv_header_name_with_comma_is_quoted():
     sampler = Sampler(columns, out=out, human=False)
     sampler.tick(0.0, MIDNIGHT)
     assert out.getvalue().splitlines()[0] == 'time,"a,b"'
+
+
+def test_resolve_width_passes_through_plain_int_and_none():
+    assert resolve_width(8, terminal_columns=80) == 8
+    assert resolve_width(None, terminal_columns=80) is None
+
+
+def test_resolve_width_computes_percent_of_terminal_columns():
+    assert resolve_width(PercentWidth(25), terminal_columns=80) == 20
+
+
+def test_resolve_width_clamps_percent_to_at_least_one():
+    assert resolve_width(PercentWidth(1), terminal_columns=40) == 1
+
+
+def test_header_reprinted_on_terminal_resize_with_no_column_change():
+    # Regression: the pinned header used to redraw only when the column set
+    # grew, so a plain vertical/horizontal resize left it un-repinned.
+    out = io.StringIO()
+    headers = []
+    sizes = [SIZE_80X24]
+    columns = [FakeColumn("a", "1")]
+    sampler = Sampler(
+        columns, out=out, human=True,
+        on_header=headers.append, get_size=lambda: sizes[0],
+    )
+    sampler.tick(0.0, MIDNIGHT)
+    sizes[0] = SIZE_40X24
+    sampler.tick(1.0, MIDNIGHT)
+    assert len(headers) == 2
+
+
+def test_header_not_reprinted_when_size_is_unchanged():
+    out = io.StringIO()
+    headers = []
+    columns = [FakeColumn("a", "1")]
+    sampler = Sampler(
+        columns, out=out, human=True,
+        on_header=headers.append, get_size=lambda: SIZE_80X24,
+    )
+    sampler.tick(0.0, MIDNIGHT)
+    sampler.tick(1.0, MIDNIGHT)
+    assert len(headers) == 1
+
+
+def test_csv_mode_ignores_resize_and_never_queries_terminal_size():
+    out = io.StringIO()
+
+    def explode():
+        raise AssertionError("csv mode must not query terminal size")
+
+    columns = [FakeColumn("a", "1")]
+    sampler = Sampler(columns, out=out, human=False, get_size=explode)
+    sampler.tick(0.0, MIDNIGHT)
+    sampler.tick(1.0, MIDNIGHT)
+    assert out.getvalue().splitlines()[0] == "time,a"
+
+
+def test_percent_width_column_scales_with_terminal_width():
+    out = io.StringIO()
+    columns = [FakeColumn("cpu", "1.5", width=PercentWidth(50))]
+    sampler = Sampler(columns, out=out, human=True, get_size=lambda: SIZE_40X24)
+    sampler.tick(0.0, MIDNIGHT)
+    lines = out.getvalue().splitlines()
+    # 50% of 40 columns == 20 chars; "cpu"/"1.5" (3 chars) pad out the rest.
+    assert lines[0] == "time, cpu" + " " * 17
+    assert lines[1] == "00:00:00.000, 1.5" + " " * 17
+
+
+def test_percent_width_column_re_resolves_after_resize():
+    out = io.StringIO()
+    sizes = [SIZE_40X24]
+    columns = [FakeColumn("cpu", "1.5", width=PercentWidth(50))]
+    sampler = Sampler(columns, out=out, human=True, get_size=lambda: sizes[0])
+    sampler.tick(0.0, MIDNIGHT)
+    sizes[0] = os.terminal_size((80, 24))
+    sampler.tick(1.0, MIDNIGHT)
+    lines = out.getvalue().splitlines()
+    # Second header reflects 50% of the new 80-column width == 40 chars.
+    assert lines[2] == "time, cpu" + " " * 37

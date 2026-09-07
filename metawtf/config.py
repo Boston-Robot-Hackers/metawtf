@@ -11,6 +11,7 @@ from pathlib import Path
 
 DEFAULT_SAMPLE_HZ = 5.0
 DEFAULT_HZ_WINDOW = 2.0
+MAX_PERCENT_WIDTH = 100.0
 # Minimum cell widths applied when a column omits `width`; values are sized for
 # the metric's format (echo/hz print %.2f, proc_cpu/sys_cpu %.1f%%). Time keeps
 # no default: the stamp's natural width varies with the chosen format.
@@ -36,6 +37,18 @@ class ConfigError(Exception):
     """Raised when metawtf.conf fails validation."""
 
 
+@dataclass(frozen=True)
+class PercentWidth:
+    """A column width given as a percentage of the terminal's width (`20%`).
+
+    Resolved against the live terminal width at render time (see
+    `sampler.resolve_width`), so the rendered width tracks a resized
+    terminal instead of staying fixed like a plain character-count width.
+    """
+
+    percent: float
+
+
 @dataclass
 class EchoColumn:
     name: str
@@ -43,14 +56,14 @@ class EchoColumn:
     field: str | None
     type: str | None = None
     stale_after: float | None = None
-    width: int | None = None
+    width: int | PercentWidth | None = None
     is_json: bool = False
     subfields: list[str] | None = None
     subfield_names: list[str] | None = None
-    subfield_widths: list[int] | None = None
+    subfield_widths: list[int | PercentWidth] | None = None
     fields: list[str] | None = None
     field_names: list[str] | None = None
-    field_widths: list[int] | None = None
+    field_widths: list[int | PercentWidth] | None = None
 
 
 @dataclass
@@ -59,27 +72,27 @@ class HzColumn:
     topic: str | None = None
     match: re.Pattern | None = None
     name: str | None = None
-    width: int | None = None
+    width: int | PercentWidth | None = None
 
 
 @dataclass
 class ProcCpuColumn:
     name: str
     process: re.Pattern
-    width: int | None = None
+    width: int | PercentWidth | None = None
 
 
 @dataclass
 class SysCpuColumn:
     name: str
     mode: str
-    width: int | None = None
+    width: int | PercentWidth | None = None
 
 
 @dataclass
 class TimeColumn:
     format: str | None = None
-    width: int | None = None
+    width: int | PercentWidth | None = None
     kind: str = "time"
     name: str = "time"
 
@@ -370,10 +383,34 @@ def parse_float(value: str, key: str, must_be_positive: bool = False) -> float:
     return number
 
 
-def parse_width(value: str | None, default: int | None = None) -> int | None:
+def parse_width(
+    value: str | None, default: int | None = None
+) -> int | PercentWidth | None:
     if value is None:
         return default
+    return parse_width_part(value)
+
+
+def parse_width_part(value: str) -> int | PercentWidth:
+    if value.endswith("%"):
+        return parse_percent_width(value)
     return parse_positive_int(value, "width")
+
+
+def parse_percent_width(value: str) -> PercentWidth:
+    number_text = value[:-1]
+    try:
+        number = float(number_text)
+    except ValueError:
+        raise ConfigError(
+            f"'width' must be a number before '%', got {value!r}"
+        ) from None
+    if not (0 < number <= MAX_PERCENT_WIDTH):
+        raise ConfigError(
+            f"'width' percent must be > 0 and <= {MAX_PERCENT_WIDTH:g},"
+            f" got {value!r}"
+        )
+    return PercentWidth(number)
 
 
 def parse_positive_int(value: str, key: str) -> int:
@@ -386,7 +423,7 @@ def parse_positive_int(value: str, key: str) -> int:
     return number
 
 
-def parse_width_list(value: str | None, count: int) -> list[int]:
+def parse_width_list(value: str | None, count: int) -> list[int | PercentWidth]:
     if value is None:
         return [DEFAULT_ECHO_WIDTH] * count
     parts = value.split(",")
@@ -395,7 +432,7 @@ def parse_width_list(value: str | None, count: int) -> list[int]:
             f"'width' must have {count} comma-separated value(s), one per"
             f" column, got {len(parts)}"
         )
-    return [parse_positive_int(part, "width") for part in parts]
+    return [parse_width_part(part) for part in parts]
 
 
 def parse_bool(value: str, key: str) -> bool:

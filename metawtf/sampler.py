@@ -9,16 +9,17 @@ Author: Pito Salas and Claude Code
 Open Source Under MIT license
 """
 
+import shutil
 import sys
 from datetime import datetime
 from typing import Protocol, TextIO
 
-from metawtf.config import TimeColumn
+from metawtf.config import PercentWidth, TimeColumn
 
 
 class SampledColumn(Protocol):
     name: str
-    width: int | None
+    width: int | PercentWidth | None
     kind: str
 
     def sample(self, now: float) -> str | None: ...
@@ -44,6 +45,20 @@ GROUP_LABELS = {
 }
 
 
+def resolve_width(
+    width: int | PercentWidth | None, terminal_columns: int
+) -> int | None:
+    """Turn a configured width into a concrete character count.
+
+    A plain `int` (or `None`) passes through unchanged; a `PercentWidth` is
+    resolved against the current terminal width, clamped to at least 1 so a
+    tiny percentage never collapses a column to nothing.
+    """
+    if isinstance(width, PercentWidth):
+        return max(1, round(width.percent / 100 * terminal_columns))
+    return width
+
+
 def colorize(text: str, kind: str) -> str:
     """Wrap text in the ANSI color for a column kind, if one is defined."""
     code = KIND_COLORS.get(kind)
@@ -62,6 +77,7 @@ class Sampler:
         human: bool,
         color: bool = False,
         on_header=None,
+        get_size=None,
     ):
         self.columns = columns
         self.time = time or TimeColumn()
@@ -72,14 +88,23 @@ class Sampler:
         # frozen header in place instead of scrolling a new one past.
         self.on_header = on_header
         self.header_width = None
+        # Only human mode cares about terminal size (pinning, percent
+        # widths); csv output ignores width entirely, so this stays unread.
+        self.get_size = get_size or shutil.get_terminal_size
+        self.last_size = None
 
     def tick(self, now_monotonic: float, now_wall: datetime) -> None:
-        # Columns can grow when a `match` hz spec discovers a new topic; the
-        # header is re-emitted so the added column is labelled (a documented
-        # CSV caveat; a pinned header is redrawn in place instead).
-        if self.header_width != len(self.columns):
+        # The header is re-emitted whenever the column set grows (a `match`
+        # hz spec discovers a new topic) or the terminal is resized: a plain
+        # resize doesn't change header text, but the pinned scroll region and
+        # any percent-based widths must still be recalculated for the new
+        # size, and re-emitting is what triggers that recalculation.
+        current_size = self.get_size() if self.human else None
+        resized = self.human and current_size != self.last_size
+        if self.header_width != len(self.columns) or resized:
             self.emit_header()
             self.header_width = len(self.columns)
+            self.last_size = current_size
         print(self.format_row(now_monotonic, now_wall), file=self.out)
 
     def emit_header(self) -> None:
@@ -92,21 +117,31 @@ class Sampler:
             print(header, file=self.out)
 
     def format_header(self) -> str:
-        cells = [("time", self.time.width)]
-        cells += [(column.name, column.width) for column in self.columns]
+        terminal_columns = self.terminal_columns()
+        cells = [("time", resolve_width(self.time.width, terminal_columns))]
+        cells += [
+            (column.name, resolve_width(column.width, terminal_columns))
+            for column in self.columns
+        ]
         return self.join_row(cells, is_header=True)
 
     def format_row(self, now_monotonic: float, now_wall: datetime) -> str:
+        terminal_columns = self.terminal_columns()
         stamp = format_timestamp(now_wall, self.time.format)
-        cells = [(stamp, self.time.width)]
+        cells = [(stamp, resolve_width(self.time.width, terminal_columns))]
         for column in self.columns:
             value = column.sample(now_monotonic)
-            cells.append(("" if value is None else value, column.width))
+            width = resolve_width(column.width, terminal_columns)
+            cells.append(("" if value is None else value, width))
         return self.join_row(cells, is_header=False)
 
     def format_group_header(self) -> str:
         columns = [self.time] + list(self.columns)
-        return join_group_header(columns)
+        return join_group_header(columns, self.terminal_columns())
+
+    def terminal_columns(self) -> int:
+        # csv ignores width, so avoid the terminal query when it can't matter.
+        return self.get_size().columns if self.human else 0
 
     def _column_kinds(self) -> list[str]:
         return ["time"] + [
@@ -154,7 +189,7 @@ def join_human(
     return "".join(parts)
 
 
-def join_group_header(columns: list[SampledColumn]) -> str:
+def join_group_header(columns: list[SampledColumn], terminal_columns: int) -> str:
     """Build the kind-group header that sits above the column-name header.
 
     Contiguous columns of the same kind are merged into one colored cell whose
@@ -173,7 +208,8 @@ def join_group_header(columns: list[SampledColumn]) -> str:
         group_width = 0
         for k in range(i, j):
             col = columns[k]
-            base = col.width if col.width is not None else len(col.name)
+            width = resolve_width(col.width, terminal_columns)
+            base = width if width is not None else len(col.name)
             group_width += base
             if k < n - 1:
                 group_width += 2  # comma + space after every column but the last

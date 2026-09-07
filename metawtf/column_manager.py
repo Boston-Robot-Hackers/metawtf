@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from metawtf.config import (
     Config,
     EchoColumn,
+    PercentWidth,
     ProcCpuColumn,
     SysCpuColumn,
     subfield_name,
@@ -45,7 +46,7 @@ class Subscription:
 class MatchSpec:
     pattern: object
     window: float
-    width: int | None
+    width: int | PercentWidth | None
 
 
 class ColumnManager:

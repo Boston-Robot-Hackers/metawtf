@@ -1,6 +1,6 @@
 ---
-version: "1.10"
-generated: "2026-09-03"
+version: "1.11"
+generated: "2026-09-07"
 ---
 
 # Config: the line-oriented `metawtf.conf` parser
@@ -106,14 +106,14 @@ class EchoColumn:
     field: str
     type: str | None = None
     stale_after: float | None = None
-    width: int | None = None
+    width: int | PercentWidth | None = None
     is_json: bool = False
     subfields: list[str] | None = None
     subfield_names: list[str] | None = None
-    subfield_widths: list[int] | None = None
+    subfield_widths: list[int | PercentWidth] | None = None
     fields: list[str] | None = None
     field_names: list[str] | None = None
-    field_widths: list[int] | None = None
+    field_widths: list[int | PercentWidth] | None = None
 
 @dataclass
 class HzColumn:
@@ -121,7 +121,7 @@ class HzColumn:
     topic: str | None = None
     match: re.Pattern | None = None
     name: str | None = None
-    width: int | None = None
+    width: int | PercentWidth | None = None
 
 @dataclass
 class Config:
@@ -348,6 +348,52 @@ forms — plain echo, hz, cpu — keep the lone-integer `width`; the fanned-out
 cases carry `EchoColumn.subfield_widths` or `field_widths`, which the column
 manager zips one-to-one with the states it creates.
 
+## A width can be a percentage, not just a character count
+
+`width=8` has always meant "8 characters." `width=20%` is a second
+vocabulary for the same key: instead of a fixed count, it names a fraction
+of the terminal's current width, resolved much later — at render time in
+`sampler.py`, not here. That split is deliberate and mirrors the `format`
+directive's tri-state design: `config.py` records *what the user asked
+for*, and only the module that actually knows the terminal's dimensions
+turns it into a number.
+
+```python
+def parse_width_part(value: str) -> int | PercentWidth:
+    if value.endswith("%"):
+        return parse_percent_width(value)
+    return parse_positive_int(value, "width")
+
+
+def parse_percent_width(value: str) -> PercentWidth:
+    number_text = value[:-1]
+    try:
+        number = float(number_text)
+    except ValueError:
+        raise ConfigError(...) from None
+    if not (0 < number <= MAX_PERCENT_WIDTH):
+        raise ConfigError(...)
+    return PercentWidth(number)
+```
+
+`PercentWidth` is a one-field frozen dataclass rather than, say, a negative
+int or a string sentinel encoding "this one's a percentage." A dedicated
+type means every consumer downstream can ask `isinstance(width,
+PercentWidth)` instead of memorizing an encoding convention, and a type
+checker can catch a spot that forgot to handle it. `parse_width_part` is the
+single place that decides which of the two vocabularies a token uses (a
+trailing `%`), and both `parse_width` (single value) and `parse_width_list`
+(the multi-field comma-list form) now route through it — so a multi-field
+echo can freely mix the two, `width=10%,8`, one form per column.
+
+The range check (`0 < number <= 100`) happens here, at parse time, because
+it is a property of the *token* — a config author who wrote `width=150%`
+made a mistake regardless of what terminal the trace eventually runs on.
+What can't be checked here is whether `20%` of some future terminal's width
+will be a *sensible* column width; that question has no answer until a
+terminal exists, so it is deferred, matching the project's boundary-then-
+trust rule applied one layer later than usual.
+
 ## Naming and small coercions
 
 When a config omits `name`, the column is named after its topic:
@@ -392,10 +438,11 @@ not a legal identifier character, but "n" reads naturally as *n*th /
 overrides all of this whenever a config author wants a cleaner header than
 the auto-derived one.
 
-The leaf coercers (`parse_float`, `parse_width`, `parse_bool`, `parse_key_list`,
-`compile_regex`) each validate exactly one value and raise a `ConfigError`
-with the offending token embedded. None of them guess-and-repair: a string
-`"fast"` for `sample_hz` is not silently defaulted; it is rejected. Booleans
+The leaf coercers (`parse_float`, `parse_width`/`parse_width_part`,
+`parse_bool`, `parse_key_list`, `compile_regex`) each validate exactly one
+value and raise a `ConfigError` with the offending token embedded. None of
+them guess-and-repair: a string `"fast"` for `sample_hz` is not silently
+defaulted; it is rejected. Booleans
 are the strict case — only the literal tokens `true`/`false` are accepted, not
 Python's usual truthy values, because in a text format `yes`, `1`, and `True`
 are all plausible typos rather than intentions. Default widths are sized to
@@ -446,3 +493,11 @@ catching half lives in the tracer node chapter).
   separate dataclasses (or a discriminated variant) would make the invariant
   unrepresentable-hence-unbreakable, at the cost of an extra branch in the
   column manager.
+- **`PercentWidth` widened the `width` type on every column dataclass, but
+  only the ones that resolve it (`config.py`, `sampler.py`) got the precise
+  annotation.** The pass-through state classes in `hz_column.py`,
+  `proc_cpu_column.py`, `sys_cpu_column.py`, and `value_column.py` still say
+  `width: int | None` even though a `PercentWidth` legitimately flows
+  through them at runtime — correct behaviorally (they never branch on the
+  value), but a type checker run across the whole package would flag the
+  mismatch.

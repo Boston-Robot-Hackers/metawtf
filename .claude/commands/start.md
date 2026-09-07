@@ -1,4 +1,7 @@
 ---
+description: Orient for this session — read context, summarize open work, wait for approval
+---
+To orient for this session:
 allowed-tools: Read Glob
 ---
 To orient for this session do every step listed here:

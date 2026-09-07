@@ -171,7 +171,7 @@ sys_cpu name=cpu_idle mode=idle
 | Key | Required | Type | Default | Rules |
 |---|---|---|---|---|
 | `format` | no | string | `HH:MM:SS.mmm` | Python `strftime`; the default keeps millisecond precision (which strftime cannot express) |
-| `width` | no | int | natural width | must be > 0; pads the column to a minimum width |
+| `width` | no | int / `N%` | natural width | must be > 0; pads the column to a minimum width — see "Percentage widths" below |
 
 #### `echo` column keys
 
@@ -184,7 +184,7 @@ Reports the latest value of a message field, sampled at each tick.
 | `name` | no | string / list | sanitized topic | column header; with a multi-field or `subfields` echo it is a comma list, one header per column (count must match) |
 | `type` | no | string | resolved from the graph | e.g. `nav_msgs/msg/Odometry`; needed only if the topic isn't up at start or is multi-type |
 | `stale_after` | no | number | never stale | must be > 0; blank the cell if no message arrives within this many seconds |
-| `width` | no | int / list | `8` | must be > 0; with a multi-field or `subfields` echo a comma list, one width per column (`4,10,6`) |
+| `width` | no | int / `N%` / list | `8` | must be > 0; with a multi-field or `subfields` echo a comma list, one width per column (`4,10,6`), each entry either form (`4,10%,6`) — see "Percentage widths" below |
 | `json` | no | bool | `false` | `json=true` parses the extracted field as a JSON string before selecting |
 | `subfields` | no | list | all top-level keys | comma-separated; requires `json=true`; dotted keys reach nested objects (`payload.count`) |
 
@@ -250,7 +250,7 @@ estimate), formatted with 2 decimals. Give exactly one of `topic` or `match`.
 | `match` | one-of | string | — | regex over graph topic names; one column per matched topic, added live as topics appear |
 | `window` | no | number | `2.0` | rolling window in seconds; must be >= the sample period |
 | `name` | no | string | sanitized topic | allowed with `topic`; **forbidden** with `match` |
-| `width` | no | int | `6` | must be > 0; pads the cell to a minimum width |
+| `width` | no | int / `N%` | `6` | must be > 0; pads the cell to a minimum width — see "Percentage widths" below |
 
 A `match` column set can grow at runtime: when a new topic is discovered the
 header is re-emitted before the next row (a fresh CSV header line in that
@@ -265,9 +265,10 @@ CPU usage columns, sampled on the same clock as everything else.
 | `name` | yes | string | — | column header |
 | `process` | yes (`proc_cpu` only) | regex | — | matched against process cmdlines; usage is summed across matches |
 | `mode` | yes (`sys_cpu` only) | `busy` \| `idle` | — | system-wide CPU percent |
-| `width` | no | int | `6` | must be > 0 |
+| `width` | no | int / `N%` | `6` | must be > 0 — see "Percentage widths" below |
 
-Both print as `%.1f%%`.
+Both print as `%.1f%%`. Both read `/proc` locally, so `metawtf` must run on
+the same machine as the node(s) being measured — not a remote sample.
 
 ### Output
 
@@ -277,13 +278,17 @@ never a crash. Floats are formatted with 2 decimals.
 
 **Human format** (default on a terminal): the header is pinned to the top of
 the screen via an ANSI scroll region, so rows scroll beneath it and the
-header never moves. `width` is a *minimum* column width; a value longer than
-it is truncated with `…` at the end; a header wider than its column is
-truncated too, keeping its *tail* (`…` at the front) so a distinguishing
-suffix like `cpu_nav2`'s `…_nav2` survives. Quitting restores the screen and
-leaves the shell prompt below the output. Rows that scroll off the pinned
-region are **not** kept in the terminal's scrollback — redirect `csv` output
-to a file for a full record.
+header never moves — re-pinned on every resize, not just when a column is
+added. `width` is a *minimum* column width; a value longer than it is
+truncated with `…` at the end; a header wider than its column keeps its
+*tail* instead (`…` at the front), e.g. `cpu_nav2` → `…_nav2`. Quitting
+restores the screen. Rows scrolled off the pinned region are **not** kept in
+scrollback — redirect `csv` output to a file for a full record.
+
+**Percentage widths.** `width=N%` (e.g. `width=20%`) resolves against the
+current terminal width on every draw, instead of a fixed character count —
+mixable with plain ints, including in a comma list (`width=10%,8`). CSV
+output ignores `width` entirely, in either form.
 
 **CSV format** (default when piped or redirected): pure RFC 4180 — bare
 commas, no padding, full untruncated values; any cell containing a comma,
@@ -295,6 +300,9 @@ escape sequences.
 - `metawtf/metawtf.conf` — the minimal sample copied by "Quick start" above.
 - `conf/metawtf.conf` — a fuller example touching every column type
   (multi-field echo, JSON subfields, `hz` by topic and by `match`, `sys_cpu`).
+- `conf/load-thermal-survey.conf` — a real-world example (from the
+  dome_vision project) combining multi-field echo, `hz`, `sys_cpu`, and
+  `proc_cpu` to diagnose an undervoltage reset.
 
 ## Troubleshooting
 

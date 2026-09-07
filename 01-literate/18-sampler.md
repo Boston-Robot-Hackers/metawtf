@@ -1,6 +1,6 @@
 ---
-version: "1.5"
-generated: "2026-07-25"
+version: "1.6"
+generated: "2026-09-07"
 ---
 
 # Sampler: turning column state into rows of output
@@ -60,7 +60,7 @@ It depends on a `Protocol`:
 ```python
 class SampledColumn(Protocol):
     name: str
-    width: int | None
+    width: int | PercentWidth | None
 
     def sample(self, now: float) -> str | None: ...
 
@@ -73,16 +73,21 @@ class Sampler:
         out: TextIO | None = None,
         *,
         human: bool,
+        color: bool = False,
         on_header=None,
+        get_size=None,
     ):
         self.columns = columns
         self.time = time or TimeColumn()
         self.out = out or sys.stdout
         self.human = human
+        self.color = color and human
         # A pinned-header terminal intercepts header prints to redraw the
         # frozen header in place instead of scrolling a new one past.
         self.on_header = on_header
         self.header_width = None
+        self.get_size = get_size or shutil.get_terminal_size
+        self.last_size = None
 ```
 
 A `Protocol` is Python's structural typing: an object conforms if it *has* the
@@ -109,6 +114,13 @@ the callback does. In the real application the callback is
 the top of the terminal — but from the sampler's perspective it is just "some
 function that wants headers."
 
+`get_size` is the newest constructor parameter, and it exists purely so
+tests can fake a terminal size instead of depending on whatever tty (or lack
+of one) happens to run pytest — the real default, `shutil.get_terminal_size`,
+is what a live run uses. `self.last_size` remembers what the sampler saw the
+terminal at as of the last header emission; the next section is where that
+memory earns its keep.
+
 Note also the two `None`-sentinel defaults. Writing `out=sys.stdout` directly
 as a default would capture the stream object when the module is *imported*,
 silently ignoring any later substitution (a test runner swapping `sys.stdout`,
@@ -120,12 +132,12 @@ construction time. The same pattern gives each `Sampler` a fresh
 
 ```python
     def tick(self, now_monotonic: float, now_wall: datetime) -> None:
-        # Columns can grow when a `match` hz spec discovers a new topic; the
-        # header is re-emitted so the added column is labelled (a documented
-        # CSV caveat; a pinned header is redrawn in place instead).
-        if self.header_width != len(self.columns):
+        current_size = self.get_size() if self.human else None
+        resized = self.human and current_size != self.last_size
+        if self.header_width != len(self.columns) or resized:
             self.emit_header()
             self.header_width = len(self.columns)
+            self.last_size = current_size
         print(self.format_row(now_monotonic, now_wall), file=self.out)
 ```
 
@@ -139,12 +151,41 @@ what a person skimming the trace, or a spreadsheet plotting it, wants to see.
 Conflating the two would risk a subtly wrong staleness check every time the
 wall clock jumps.
 
-The header guard compares a remembered column *count* against the current one.
-The column set is fixed at config time for most column kinds, but `match` hz
-specs and key-less `json` echo columns append columns at runtime as they
-discover topics and keys. Since columns are only ever appended, a count change
-always means "new columns arrived," and the header is re-emitted so the wider
-rows that follow are labelled.
+The header guard now watches *two* things, not one. It still compares a
+remembered column *count* against the current one — the column set is fixed
+at config time for most column kinds, but `match` hz specs and key-less
+`json` echo columns append columns at runtime as they discover topics and
+keys, and since columns are only ever appended, a count change always means
+"new columns arrived." The second condition, `resized`, is newer: it
+compares the terminal's current size against the size as of the *last*
+header emission.
+
+### Why a resize alone has to trigger a re-emit
+
+Before this check existed, a header was only ever re-emitted when the column
+count changed — plausible, since the header's *text* genuinely doesn't
+change on a plain resize. But the header isn't just text: in a pinned
+terminal, `emit_header` routes through `on_header` to `PinnedHeader.show`,
+which recalculates the ANSI scroll region from the terminal's *current*
+size every time it runs (see the terminal chapter). If nothing ever calls
+`show` again after a resize, that recalculation never happens — the pinned
+region stays sized for the terminal's *old* dimensions, and most terminal
+emulators reset scroll margins to full-screen on a resize regardless, so the
+header visibly scrolls away with the data. The fix isn't in the pinning
+logic at all (it was already correct, and already tested against a fresh
+`get_size()` — see `test_draw_header_reissues_region_from_a_fresh_size` in
+the terminal chapter); the bug was upstream, in never *calling* it again.
+
+Polling `get_size()` once per tick — rather than installing a `SIGWINCH`
+handler — was a deliberate choice: `sample_hz` already drives a poll loop at
+a rate the user controls, `shutil.get_terminal_size()` is a cheap syscall,
+and a signal handler would be one more moving part with its own portability
+question (no `SIGWINCH` on Windows) for a check that's already cheap enough
+to run unconditionally. `current_size`/`resized` are only computed when
+`human` is true — `csv` mode never needs to know the terminal's size at all,
+so the check (and the `get_size()` call underneath it) is skipped entirely
+there, matching the project's habit of doing no work an inactive consumer
+can't observe.
 
 ## emit_header: one hook, two behaviors
 
@@ -182,27 +223,37 @@ representation: a list of `(text, width)` pairs:
 
 ```python
     def format_header(self) -> str:
-        cells = [("time", self.time.width)]
-        cells += [(column.name, column.width) for column in self.columns]
+        terminal_columns = self.terminal_columns()
+        cells = [("time", resolve_width(self.time.width, terminal_columns))]
+        cells += [
+            (column.name, resolve_width(column.width, terminal_columns))
+            for column in self.columns
+        ]
         return self.join_row(cells, is_header=True)
 
     def format_row(self, now_monotonic: float, now_wall: datetime) -> str:
+        terminal_columns = self.terminal_columns()
         stamp = format_timestamp(now_wall, self.time.format)
-        cells = [(stamp, self.time.width)]
+        cells = [(stamp, resolve_width(self.time.width, terminal_columns))]
         for column in self.columns:
             value = column.sample(now_monotonic)
-            cells.append(("" if value is None else value, column.width))
+            width = resolve_width(column.width, terminal_columns)
+            cells.append(("" if value is None else value, width))
         return self.join_row(cells, is_header=False)
+
+    def terminal_columns(self) -> int:
+        # csv ignores width, so avoid the terminal query when it can't matter.
+        return self.get_size().columns if self.human else 0
 ```
 
 Three details carry the design here:
 
-- **Both header and row use the same width for a column** — the column's
-  configured `width`, unchanged. That is what keeps the header aligned over the
-  data in human mode: every row, including the header, is laid out against the
-  same per-column width. When a name is wider than that width the *header* is
-  cut to fit (see below), never the column widened — so the column's extent is
-  fixed by its `width` and both rows honor it.
+- **Both header and row use the same *resolved* width for a column.** That is
+  what keeps the header aligned over the data in human mode: every row,
+  including the header, is laid out against the same per-column width. When a
+  name is wider than that width the *header* is cut to fit (see below), never
+  the column widened — so the column's extent is fixed by its width and both
+  rows honor it.
 - **`None` from a column becomes an empty string**, never `"None"` and never
   `0`. A column that has nothing to report yet (its topic hasn't published,
   say) leaves a blank cell, preserving the row's column count.
@@ -211,6 +262,45 @@ Three details carry the design here:
   the way down — is exactly what makes the two render modes possible: all the
   shared work (sampling, `None`-handling, width computation) happens once,
   and only the final assembly differs.
+
+## A width can be a percentage: resolving it at the last possible moment
+
+`config.py` lets `width=` be either a plain integer or `N%` (a
+`PercentWidth`), and deliberately leaves the percentage un-resolved — see
+the config chapter. Turning it into a concrete character count is this
+module's job, because this is the only place that knows the terminal's
+current width:
+
+```python
+def resolve_width(
+    width: int | PercentWidth | None, terminal_columns: int
+) -> int | None:
+    if isinstance(width, PercentWidth):
+        return max(1, round(width.percent / 100 * terminal_columns))
+    return width
+```
+
+A plain `int` or `None` passes straight through — `resolve_width` is a
+no-op for the large majority of columns that never opted into a percentage.
+The `max(1, ...)` clamp exists because the arithmetic is honest about a
+case config-time validation can't rule out: `1%` of an 80-column terminal is
+`0.8`, which rounds to `1` anyway, but a tiny enough percentage or a narrow
+enough terminal could round to `0` — and a zero-width column is nonsense to
+render (pointless as a cell, and it would divide the `truncate`/`pad`
+machinery by a case it was never written for). Clamping to `1` isn't
+error-recovery in the "something went wrong" sense the project otherwise
+avoids; there's no invalid input here, just an edge case in a runtime
+computation with a genuinely correct floor.
+
+`format_header` and `format_row` both call `resolve_width` per cell, every
+time they run — which means a `PercentWidth` column's *row* naturally tracks
+a resized terminal on the very next tick, with no special-casing: `format_row`
+already runs once per tick regardless. The header is different, because it
+isn't reformatted every tick (see "why a resize alone has to trigger a
+re-emit" above) — that's precisely the gap the `resized` check in `tick`
+closes. `join_group_header` (the `--color` group-label row) resolves widths
+the same way, taking `terminal_columns` as a parameter instead of reading it
+off `self`, since it's a free function shared with tests.
 
 The dispatch itself is one `if`:
 
@@ -418,11 +508,19 @@ the user at the cost of that precision.
   future `self.states = [...]` reassignment in the manager would silently
   freeze the output. Passing a columns provider (or the manager itself)
   instead would remove the coupling.
-- **The header guard keys on count, not identity.** Because columns are only
-  ever appended, `header_width != len(self.columns)` is a correct proxy for
-  "the column set changed." If removal or replacement ever became possible, a
-  swap that preserved the count would slip past the guard; keying on column
-  identity (e.g. a tuple of names) would be more robust.
+- **The header guard's column-count half keys on count, not identity.**
+  Because columns are only ever appended, `header_width != len(self.columns)`
+  is a correct proxy for "the column set changed." If removal or replacement
+  ever became possible, a swap that preserved the count would slip past the
+  guard; keying on column identity (e.g. a tuple of names) would be more
+  robust.
+- **`get_size()` is called several times per tick.** `tick`'s resize check,
+  `format_row`, and (when `--color` re-emits a header) `format_header` and
+  `format_group_header` each call it independently rather than sharing one
+  value computed once per tick. Harmless today — it's a cheap syscall at a
+  low sample rate, not a hot loop — but a `Sampler`-level "current tick's
+  terminal size" cache would remove the duplication if `get_size` ever
+  became more expensive (a network-backed terminal, say).
 - **`format_timestamp` truncates rather than rounds.** `microsecond // 1000`
   discards sub-millisecond precision by truncation, not rounding. Harmless for
   a human-readable timestamp column, but worth knowing if timestamps are ever

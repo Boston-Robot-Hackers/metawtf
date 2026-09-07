@@ -1,6 +1,6 @@
 ---
-version: "1.4"
-generated: "2026-07-29"
+version: "1.5"
+generated: "2026-09-07"
 ---
 
 # Column manager: one place that owns columns and subscriptions
@@ -72,6 +72,13 @@ class Subscription:
     subscribed: bool = False
     failed: bool = False
 ```
+
+(`MatchSpec.width` is typed `int | PercentWidth | None` — the manager never
+inspects it, just carries it from `config.py`'s parsed `HzColumn.width`
+through to the `HzColumnState` it eventually builds. Resolving a
+`PercentWidth` into an actual character count happens downstream, in
+`sampler.py`, the only place that knows the terminal's width; see the
+config and sampler chapters.)
 
 The two boolean flags encode a small state machine: pending → subscribed, or
 pending → failed. Both terminal states are checked at the top of

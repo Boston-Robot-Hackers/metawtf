@@ -1,4 +1,5 @@
 ---
+description: Run tests, update docs, commit and push
 allowed-tools: Bash(git add *) Bash(git commit *) Bash(git push *) Bash(ruff *) Read Edit Write Glob
 ---
 Run a full checkpoint in this order:

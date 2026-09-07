@@ -1,22 +1,22 @@
 # Current Status — Session Handoff
 
-**Last updated:** 2026-09-05
+**Last updated:** 2026-09-07
 
 ## State
 
-Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). Full suite:
-**262 passed** via plain `python3 -m pytest -q` from the repo root, run on a
-ROS2-sourced machine. (This file previously said `uv run pytest`/`223
-passed`; that was stale — there is no `uv` or `pyproject.toml` in this repo,
-per `.claude/settings.json`'s `autoMode.environment` block.)
+Developing on ROS2 Jazzy (real `rclpy`/`rosidl` available). On this Mac (no
+ROS2 install): **244 passed, 4 skipped, 10 failed** via plain
+`python3 -m pytest -q` from the repo root — the 10 failures are the known
+`rosidl_runtime_py` gap below, not a regression. Last confirmed clean run on
+a ROS2-sourced machine was **262 passed** (pre-F13); not yet reconfirmed
+there with F13's 14 new tests, so expect ~276 passed on that machine but
+treat it as unverified until actually run.
 
 **Correction to the "no sourced workspace needed" claim above:** it does not
 hold on a machine with no ROS2 install at all. `metawtf/msg_type.py` imports
 `rosidl_runtime_py` (a dependency since the original TF01 commit), so
 `test/test_column_manager.py`'s 10 tests fail to collect without ROS2
-sourced — confirmed on a Mac with no ROS2 install (228-229 passed, 4 skipped,
-10 failed on that machine) and then re-run clean (262 passed) on a
-ROS2-equipped machine. Not a regression — just know which machine you're on.
+sourced. Not a regression — just know which machine you're on.
 
 ## Open
 
@@ -45,13 +45,11 @@ whatever ruff's bare defaults are — currently **5 E402 findings**, all in
 pytest.importorskip("rclpy")` line by necessity (that line must run first to
 skip the whole file cleanly when `rclpy` is absent) — a justified violation,
 not an oversight; see the matching entry in `04-tasks/chores.md`.
-`ruff format --check .` would rewrite **14 files**, all pre-existing
-line-wrapping/list-formatting choices unrelated to any current work. (This
-file previously cited "52 findings, dominated by EXE001" — that number came
-from a differently-scoped ruff invocation in an earlier session, not plain
-`ruff check .`; corrected here.) The underlying open question is unchanged:
-no decision has been made on adopting `ruff format`/a wider rule set
-repo-wide, same as `dome_vision`.
+`ruff format --check .` would rewrite **15 files** (up from 14 previously
+noted — some touched by F13), all line-wrapping/list-formatting choices
+unrelated to any current work's actual logic. The underlying open question
+is unchanged: no decision has been made on adopting `ruff format`/a wider
+rule set repo-wide, same as `dome_vision`.
 
 The kit's `.claude/templates/pre-commit.template` (the header-stamping hook)
 is still not materialized: no `.githooks/` directory, `core.hooksPath`
@@ -62,6 +60,12 @@ lines yet.
 
 - `colcon test` collects 0 tests though plain `pytest` finds 262; add pytest
   discovery config so the colcon path is green too.
+- `03-features/template.md` and `04-tasks/template.md` are stale duplicates
+  of `.claude/templates/feature-template.md`/`task_template.md` (missing
+  `Date Created:`; old `T01`/`T02` step numbering instead of `TFNN.N`).
+  `.claude/commands/feature.md` was just repointed at the canonical
+  `.claude/templates/` pair (this session's `.claude` sync from `j3`), but
+  the stale root-level copies are still there — delete or refresh them.
 
 ## Parked
 

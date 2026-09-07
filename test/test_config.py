@@ -9,7 +9,7 @@ import textwrap
 
 import pytest
 
-from metawtf.config import ConfigError, load_config, parse_config
+from metawtf.config import ConfigError, PercentWidth, load_config, parse_config
 
 
 def load(conf_text: str):
@@ -173,6 +173,39 @@ def test_zero_width_raises():
         load("echo /odom field=x width=0\n")
 
 
+def test_percent_width_parses_on_echo_and_hz_columns():
+    config = load(
+        """
+        echo /odom field=pose.pose.position.x width=20%
+        hz /tf width=12.5%
+        """
+    )
+    assert config.columns[0].width == PercentWidth(20)
+    assert config.columns[1].width == PercentWidth(12.5)
+
+
+def test_percent_width_over_100_raises():
+    with pytest.raises(ConfigError, match="percent"):
+        load("echo /odom field=x width=150%\n")
+
+
+def test_percent_width_zero_raises():
+    with pytest.raises(ConfigError, match="percent"):
+        load("echo /odom field=x width=0%\n")
+
+
+def test_non_numeric_percent_width_raises():
+    with pytest.raises(ConfigError, match="number"):
+        load("echo /odom field=x width=abc%\n")
+
+
+def test_percent_width_in_multi_field_list():
+    config = load(
+        "echo /odom field=x,y name=x,y width=10%,8\n"
+    )
+    assert config.columns[0].field_widths == [PercentWidth(10), 8]
+
+
 def test_time_defaults_when_absent():
     config = load("echo /odom field=x\n")
     assert config.time.format is None
@@ -183,6 +216,11 @@ def test_time_format_and_width_parse():
     config = load("time format=%H:%M:%S width=12\necho /odom field=x\n")
     assert config.time.format == "%H:%M:%S"
     assert config.time.width == 12
+
+
+def test_time_percent_width_parses():
+    config = load("time width=15%\necho /odom field=x\n")
+    assert config.time.width == PercentWidth(15)
 
 
 def test_time_unknown_key_raises():

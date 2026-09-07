@@ -10,10 +10,10 @@ Create a new feature and its matching task file for: $ARGUMENTS
    `NN` found across both, add 1, zero-pad to two digits. Start at `01` if none
    exist.
 3. Pick a short kebab-case slug from the request.
-4. Copy `03-features/template.md` to `03-features/notdone/FNN-<slug>.md`. Fill in
+4. Copy `templates/feature-template.md` to `03-features/notdone/FNN-<slug>.md`. Fill in
    the feature number, priority, description, and demo steps — do not leave
    template placeholders unfilled. Set `Tasks File Created: yes`.
-5. Copy `04-tasks/template.md` to `04-tasks/notdone/TFNN-<slug>.md`. Break the
+5. Copy `templates/task_template.md` to `04-tasks/notdone/TFNN-<slug>.md`. Break the
    feature into concrete, testable steps per `.claude/process.md`'s tasks rules:
    every step gets a test where feasible (record why when not), include a
    dedicated test-writing task, and never include a "regenerate literate docs"

@@ -3,6 +3,44 @@
 Completed features, resolved issues, and other closed-out context, moved
 here from `02-doc/current.md` once no longer "current." Newest first.
 
+## 2026-09-07
+
+**F13 (Buddy's display requests): closed.** Three bundled requests: (1) the
+pinned header now re-pins on any terminal resize, not only when a column is
+added — a poll-based per-tick size check in `Sampler.tick` (not `SIGWINCH`:
+simpler, portable, and consistent with the codebase's existing poll-driven
+header-growth check); (2) `width=N%` is now accepted everywhere `width=N`
+is, resolved against the live terminal width at render time (`PercentWidth`
+in `config.py`, `resolve_width()` in `sampler.py`), coexisting with fixed
+widths including within one multi-field comma list; (3) README now states
+that `proc_cpu`/`sys_cpu` require `metawtf` to run on the same machine as
+the measured ROS2 node(s), since both read local `/proc`. 14 new tests
+across `test_config.py`/`test_sampler.py`; full suite 244 passed, 4 skipped
+on this (no-ROS2) machine, same known `rosidl_runtime_py` gap unaffected.
+
+**`conf/load-thermal-survey.conf` added.** A real-world example config
+(adapted from `dome_vision`'s `dome_vision_ros/config/metawtf/load.conf`,
+given a clearer name) combining multi-field `echo`, `hz`, `sys_cpu`, and
+`proc_cpu` to diagnose an undervoltage reset — a useful complement to
+`conf/metawtf.conf`'s syntax-coverage example. Referenced in README's
+Examples section; logged as a chore (doc-only, no spec change).
+
+**`.claude/` re-synced from the canonical `j3` kit.** `process.md`,
+`style_guide.md`, `literate.md`, `bootstrap.md`, `agents/`, `hooks/`, and
+most `templates/` were already identical — j3 had caught up since an
+earlier comparison this session found it drifted toward an unrelated
+`oak_roboflow` project's customizations. Copied three genuinely-improved
+command files from j3: `commands/checkpoint.md`, `commands/feature.md`
+(now points at the canonical `.claude/templates/feature-template.md`/
+`task_template.md` instead of metawtf's own stale root-level duplicates —
+see the new chore in `current.md`), and `commands/start.md`. Deliberately
+did **not** copy `settings.json` (metawtf's has real project values; j3's
+is still the generic bootstrap placeholder) or `settings.local.json`
+(gitignored/machine-local, per `process.md`'s own rule). j3's
+`templates/CLAUDE.md.template` still has unresolved git merge-conflict
+markers (`<<<<<<< HEAD`/`=======`/`>>>>>>>`) — flagged to the user, not
+copied.
+
 ## 2026-09-05
 
 **`TimeColumn` crash on `--color` fixed.** A user on a real ROS2/colcon
